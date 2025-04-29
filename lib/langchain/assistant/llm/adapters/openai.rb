@@ -18,9 +18,11 @@ module Langchain
             instructions:,
             tools:,
             tool_choice:,
-            parallel_tool_calls:
+            parallel_tool_calls:,
+            metadata: nil
           )
             params = {messages: messages}
+            params[:metadata] = metadata if metadata
             if tools.any?
               params[:tools] = build_tools(tools)
               params[:tool_choice] = build_tool_choice(tool_choice)
