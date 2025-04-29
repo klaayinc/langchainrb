@@ -18,7 +18,8 @@ module Langchain
             instructions:,
             tools:,
             tool_choice:,
-            parallel_tool_calls:
+            parallel_tool_calls:,
+            metadata: nil
           )
             Langchain.logger.warn "WARNING: `parallel_tool_calls:` is not supported by Mistral AI currently"
 
