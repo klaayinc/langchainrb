@@ -265,23 +265,13 @@ module Langchain
       last_message = messages.last
 
       case last_message.standard_role
-      when :system
-        handle_system_message
       when :llm
         handle_llm_message
-      when :user, :tool
-        handle_user_or_tool_message
+      when :user, :tool, :system
+        handle_user_or_tool_or_system_message
       else
         handle_unexpected_message
       end
-    end
-
-    # Handle system message scenario
-    #
-    # @return [Symbol] The completed state
-    def handle_system_message
-      Langchain.logger.warn("#{self.class} - At least one user message is required after a system message")
-      :completed
     end
 
     # Handle LLM message scenario
@@ -302,7 +292,7 @@ module Langchain
     # Handle user or tool message scenario by processing the LLM response
     #
     # @return [Symbol] The next state
-    def handle_user_or_tool_message
+    def handle_user_or_tool_or_system_message
       response = chat_with_llm
 
       add_message(role: response.role, content: response.chat_completion, tool_calls: response.tool_calls)
