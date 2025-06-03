@@ -21,7 +21,7 @@ module Langchain
             parallel_tool_calls:,
             metadata: nil
           )
-            Langchain.logger.warn "WARNING: `parallel_tool_calls:` is not supported by Google Gemini currently"
+            Langchain.logger.warn "WARNING: `parallel_tool_calls:` is not supported by Google Gemini currently" if parallel_tool_calls
 
             params = {messages: messages}
             params[:metadata] = metadata if metadata
