@@ -72,7 +72,7 @@ module Langchain
 
           # Get the allowed assistant.tool_choice values for OpenAI
           def allowed_tool_choices
-            ["auto", "none"]
+            ["auto", "none", "required"]
           end
 
           # Get the available tool names for OpenAI
@@ -92,7 +92,7 @@ module Langchain
 
           def build_tool_choice(choice)
             case choice
-            when "auto"
+            when "auto", "required"
               choice
             else
               {"type" => "function", "function" => {"name" => choice}}
