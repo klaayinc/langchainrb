@@ -23,6 +23,7 @@ loader.inflector.inflect(
   "mistral_ai_message" => "MistralAIMessage",
   "openai" => "OpenAI",
   "openai_response" => "OpenAIResponse",
+  "openai_responses_response" => "OpenAIResponsesResponse",
   "openai_message" => "OpenAIMessage",
   "pdf" => "PDF"
 )

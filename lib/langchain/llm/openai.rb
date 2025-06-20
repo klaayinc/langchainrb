@@ -29,7 +29,8 @@ module Langchain::LLM
     #
     # @param api_key [String] The API key to use
     # @param client_options [Hash] Options to pass to the OpenAI::Client constructor
-    def initialize(api_key:, llm_options: {}, default_options: {})
+    # @param use_responses_api [Boolean] Whether to use the Responses API instead of Chat Completions API
+    def initialize(api_key:, llm_options: {}, default_options: {}, use_responses_api: false)
       depends_on "ruby-openai", req: "openai"
 
       llm_options[:log_errors] = Langchain.logger.debug? unless llm_options.key?(:log_errors)
@@ -39,6 +40,7 @@ module Langchain::LLM
       end
 
       @defaults = DEFAULTS.merge(default_options)
+      @use_responses_api = use_responses_api
       chat_parameters.update(
         model: {default: @defaults[:chat_model]},
         logprobs: {},
@@ -118,33 +120,11 @@ module Langchain::LLM
     # @option params [Array<Hash>] :messages List of messages comprising the conversation so far
     # @option params [String] :model ID of the model to use
     def chat(params = {}, &block)
-      parameters = chat_parameters.to_params(params)
-      parameters[:metadata] = params[:metadata] if params[:metadata]
-
-      raise ArgumentError.new("messages argument is required") if Array(parameters[:messages]).empty?
-      raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
-      if parameters[:tool_choice] && Array(parameters[:tools]).empty?
-        raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
+      if @use_responses_api
+        responses_chat(params, &block)
+      else
+        chat_completions_chat(params, &block)
       end
-
-      if block
-        @response_chunks = []
-        parameters[:stream_options] = {include_usage: true}
-        parameters[:stream] = proc do |chunk, _bytesize|
-          chunk_content = chunk.dig("choices", 0) || {}
-          @response_chunks << chunk
-          yield chunk_content
-        end
-      end
-
-      response = with_api_error_handling do
-        client.chat(parameters: parameters)
-      end
-
-      response = response_from_chunks if block
-      reset_response_chunks
-
-      Langchain::LLM::OpenAIResponse.new(response)
     end
 
     # Generate a summary for a given text
@@ -179,6 +159,66 @@ module Langchain::LLM
       raise Langchain::LLM::ApiError.new "OpenAI API error: #{response.dig("error", "message")}" if response&.dig("error")
 
       response
+    end
+
+    def chat_completions_chat(params = {}, &block)
+      parameters = chat_parameters.to_params(params)
+      parameters[:metadata] = params[:metadata] if params[:metadata]
+
+      raise ArgumentError.new("messages argument is required") if Array(parameters[:messages]).empty?
+      raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
+      if parameters[:tool_choice] && Array(parameters[:tools]).empty?
+        raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
+      end
+
+      if block
+        @response_chunks = []
+        parameters[:stream_options] = {include_usage: true}
+        parameters[:stream] = proc do |chunk, _bytesize|
+          chunk_content = chunk.dig("choices", 0) || {}
+          @response_chunks << chunk
+          yield chunk_content
+        end
+      end
+
+      response = with_api_error_handling do
+        client.chat(parameters: parameters)
+      end
+
+      response = response_from_chunks if block
+      reset_response_chunks
+
+      Langchain::LLM::OpenAIResponse.new(response)
+    end
+
+    def responses_chat(params = {}, &block)
+      parameters = chat_parameters.to_params(params)
+      parameters[:metadata] = params[:metadata] if params[:metadata]
+
+      raise ArgumentError.new("messages argument is required") if Array(parameters[:messages]).empty?
+      raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
+      if parameters[:tool_choice] && Array(parameters[:tools]).empty?
+        raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
+      end
+
+      if block
+        @response_chunks = []
+        parameters[:stream_options] = {include_usage: true}
+        parameters[:stream] = proc do |chunk, _bytesize|
+          chunk_content = chunk.dig("choices", 0) || {}
+          @response_chunks << chunk
+          yield chunk_content
+        end
+      end
+
+      response = with_api_error_handling do
+        client.responses(parameters: parameters)
+      end
+
+      response = response_from_chunks if block
+      reset_response_chunks
+
+      Langchain::LLM::OpenAIResponsesResponse.new(response)
     end
 
     def response_from_chunks

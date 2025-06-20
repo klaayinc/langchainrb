@@ -799,6 +799,182 @@ RSpec.describe Langchain::LLM::OpenAI do
     end
   end
 
+  describe "#chat with Responses API" do
+    let(:responses_subject) { described_class.new(api_key: "123", use_responses_api: true, **options) }
+    let(:prompt) { "What is the meaning of life?" }
+    let(:model) { "gpt-4o-mini" }
+    let(:n) { 1 }
+    let(:history) { [content: prompt, role: "user"] }
+    let(:parameters) { {parameters: {n: n, messages: history, model: model}} }
+    let(:answer) { "As an AI language model, I don't have feelings, but I'm functioning well. How can I assist you today?" }
+    let(:answer_2) { "Alternative answer" }
+    let(:choices) do
+      [
+        {
+          "message" => {
+            "role" => "assistant",
+            "content" => answer
+          },
+          "finish_reason" => "stop",
+          "index" => 0
+        }
+      ]
+    end
+    let(:response) do
+      {
+        "id" => "resp-9otuxUHnW84Zqu97VE1eKPmXVLAv0",
+        "object" => "response",
+        "created" => 1721918375,
+        "model" => "gpt-4o-mini-2024-07-18",
+        "usage" => {
+          "prompt_tokens" => 14,
+          "completion_tokens" => 25,
+          "total_tokens" => 39
+        },
+        "choices" => choices
+      }
+    end
+
+    before do
+      allow(responses_subject.client).to receive(:responses).with(parameters).and_return(response)
+    end
+
+    it "uses the Responses API when use_responses_api is true" do
+      response = responses_subject.chat(messages: [{role: "user", content: "What is the meaning of life?"}])
+
+      expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+      expect(response.model).to eq("gpt-4o-mini-2024-07-18")
+      expect(response.chat_completion).to eq("As an AI language model, I don't have feelings, but I'm functioning well. How can I assist you today?")
+      expect(response.prompt_tokens).to eq(14)
+      expect(response.completion_tokens).to eq(25)
+      expect(response.total_tokens).to eq(39)
+    end
+
+    it "ignores any invalid parameters provided" do
+      response = responses_subject.chat(
+        messages: [{role: "user", content: "What is the meaning of life?"}],
+        top_k: 5,
+        beep: :boop
+      )
+
+      expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+    end
+
+    context "with prompt" do
+      it "sends prompt within messages" do
+        response = responses_subject.chat(messages: [{role: "user", content: prompt}])
+
+        expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+        expect(response.model).to eq("gpt-4o-mini-2024-07-18")
+        expect(response.completions).to eq(choices)
+        expect(response.chat_completion).to eq(answer)
+      end
+    end
+
+    context "with messages" do
+      it "sends messages" do
+        response = responses_subject.chat(messages: [{role: "user", content: prompt}])
+
+        expect(response.chat_completion).to eq(answer)
+      end
+    end
+
+    context "with multiple choices" do
+      let(:n) { 2 }
+      let(:choices) do
+        [
+          {
+            "message" => {"role" => "assistant", "content" => answer},
+            "finish_reason" => "stop",
+            "index" => 0
+          },
+          {
+            "message" => {"role" => "assistant", "content" => answer_2},
+            "finish_reason" => "stop",
+            "index" => 1
+          }
+        ]
+      end
+
+      it "returns multiple response messages" do
+        response = responses_subject.chat(messages: [content: prompt, role: "user"], model: model, n: 2)
+
+        expect(response.completions).to eq(choices)
+      end
+    end
+
+    context "when streaming with a block" do
+      let(:messages) { [{role: "user", content: "Tell me a joke"}] }
+      let(:stream_chunks) do
+        now = Time.now.to_i
+        model_name = "gpt-4o-mini"
+        chunk_id = "resp-stream-test"
+
+        [
+          {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "choices" => [{"index" => 0, "delta" => {"role" => "assistant"}}]},
+          {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "choices" => [{"index" => 0, "delta" => {"content" => "Why did the chicken cross the road?"}}]},
+          {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "choices" => [{"index" => 0, "delta" => {}, "finish_reason" => "stop"}]},
+          {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "usage" => {"prompt_tokens" => 5, "completion_tokens" => 10, "total_tokens" => 15}}
+        ]
+      end
+      let(:collected_yielded_chunks) { [] }
+      let(:streaming_block) { proc { |chunk| collected_yielded_chunks << chunk } }
+      let(:expected_completion) { "Why did the chicken cross the road?" }
+
+      before do
+        allow(responses_subject.client).to receive(:responses) do |parameters:|
+          expect(parameters[:stream]).to be_a(Proc)
+          expect(parameters[:stream_options]).to eq({include_usage: true})
+          stream_chunks.each { |chunk| parameters[:stream].call(chunk, chunk.to_json.bytesize) }
+          nil # Simulate nil return after streaming
+        end
+      end
+
+      it "does not raise NoMethodError and returns correctly assembled response" do
+        expect {
+          response = responses_subject.chat(messages: messages, &streaming_block)
+          expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+          expect(response.chat_completion).to eq(expected_completion)
+          expect(response.role).to eq("assistant")
+          expect(response.prompt_tokens).to eq(5)
+          expect(response.completion_tokens).to eq(10)
+          expect(response.total_tokens).to eq(15)
+        }.not_to raise_error
+      end
+
+      it "yields the processed delta chunks to the block" do
+        responses_subject.chat(messages: messages, &streaming_block)
+        expected_yielded_chunks = stream_chunks.map { |c| c.dig("choices", 0) || {} }
+        expect(collected_yielded_chunks).to eq(expected_yielded_chunks)
+        expect(collected_yielded_chunks.map { |c| c.dig("delta", "content") }.compact.join).to eq(expected_completion)
+      end
+    end
+
+    context "with failed API call" do
+      let(:response) do
+        {"error" => {"code" => 400, "message" => "User location is not supported for the API use.", "type" => "invalid_request_error"}}
+      end
+
+      before do
+        allow(responses_subject.client).to receive(:responses).with(parameters).and_return(response)
+      end
+
+      it "raises an error" do
+        expect {
+          responses_subject.chat(messages: [content: prompt, role: "user"])
+        }.to raise_error(Langchain::LLM::ApiError, "OpenAI API error: User location is not supported for the API use.")
+      end
+    end
+
+    context "with tool_choice" do
+      it "raises an error" do
+        expect {
+          responses_subject.chat(messages: [content: prompt, role: "user"], tool_choice: "auto")
+        }.to raise_error(ArgumentError, "'tool_choice' is only allowed when 'tools' are specified.")
+      end
+    end
+  end
+
   describe "#summarize" do
     let(:text) { "Text to summarize" }
 
