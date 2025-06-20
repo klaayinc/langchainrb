@@ -704,10 +704,10 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
 
       it "handles streaming responses correctly" do
-        allow(subject.client).to receive(:chat) do |parameters|
-          parameters[:parameters][:stream].call(streamed_response_chunk)
-          parameters[:parameters][:stream].call(streamed_response_chunk_2)
-          parameters[:parameters][:stream].call(token_usage)
+        allow(subject.client).to receive(:chat) do |parameters:|
+          parameters[:stream].call(streamed_response_chunk)
+          parameters[:stream].call(streamed_response_chunk_2)
+          parameters[:stream].call(token_usage)
         end
         response = subject.chat(messages: [content: prompt, role: "user"], n: 2) do |chunk|
           chunk
@@ -836,7 +836,7 @@ RSpec.describe Langchain::LLM::OpenAI do
     end
 
     before do
-      allow(responses_subject.client).to receive(:responses).with(parameters).and_return(response)
+      allow(responses_subject.client.responses).to receive(:create).with(parameters).and_return(response)
     end
 
     it "uses the Responses API when use_responses_api is true" do
@@ -922,7 +922,7 @@ RSpec.describe Langchain::LLM::OpenAI do
       let(:expected_completion) { "Why did the chicken cross the road?" }
 
       before do
-        allow(responses_subject.client).to receive(:responses) do |parameters:|
+        allow(responses_subject.client.responses).to receive(:create) do |parameters:|
           expect(parameters[:stream]).to be_a(Proc)
           expect(parameters[:stream_options]).to eq({include_usage: true})
           stream_chunks.each { |chunk| parameters[:stream].call(chunk, chunk.to_json.bytesize) }
@@ -987,9 +987,9 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
 
       it "handles streaming responses correctly" do
-        allow(responses_subject.client).to receive(:responses) do |parameters|
+        allow(responses_subject.client.responses).to receive(:create) do |parameters:|
           chunks.each do |chunk|
-            parameters[:parameters][:stream].call(chunk)
+            parameters[:stream].call(chunk)
           end
           chunks.last
         end
@@ -1054,9 +1054,9 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
 
       it "handles streaming responses correctly" do
-        allow(responses_subject.client).to receive(:responses) do |parameters|
-          parameters[:parameters][:stream].call(streamed_response_chunk)
-          parameters[:parameters][:stream].call(token_usage)
+        allow(responses_subject.client.responses).to receive(:create) do |parameters:|
+          parameters[:stream].call(streamed_response_chunk)
+          parameters[:stream].call(token_usage)
         end
         response = responses_subject.chat(messages: [content: prompt, role: "user"]) do |chunk|
           chunk
@@ -1090,10 +1090,10 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
 
       it "handles streaming responses correctly" do
-        allow(responses_subject.client).to receive(:responses) do |parameters|
-          parameters[:parameters][:stream].call(streamed_response_chunk)
-          parameters[:parameters][:stream].call(streamed_response_chunk_2)
-          parameters[:parameters][:stream].call(token_usage)
+        allow(responses_subject.client.responses).to receive(:create) do |parameters:|
+          parameters[:stream].call(streamed_response_chunk)
+          parameters[:stream].call(streamed_response_chunk_2)
+          parameters[:stream].call(token_usage)
         end
         response = responses_subject.chat(messages: [content: prompt, role: "user"], n: 2) do |chunk|
           chunk
@@ -1117,7 +1117,7 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
 
       before do
-        allow(responses_subject.client).to receive(:responses).with(parameters).and_return(response)
+        allow(responses_subject.client.responses).to receive(:create).with(parameters).and_return(response)
       end
 
       it "raises an error" do

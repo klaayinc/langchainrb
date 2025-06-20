@@ -212,7 +212,7 @@ module Langchain::LLM
       end
 
       response = with_api_error_handling do
-        client.responses(parameters: parameters)
+        client.responses.create(parameters: parameters)
       end
 
       response = response_from_chunks if block
