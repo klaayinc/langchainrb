@@ -229,21 +229,21 @@ response = llm.chat(messages: [{role: "user", content: "Hello"}])
 - [x] Add basic streaming support for responses API
 
 ### Phase 2 Tasks
-- [ ] Implement tool calling for responses API
-- [ ] Complete streaming implementation
-- [ ] Add comprehensive error handling
-- [ ] Test feature parity with chat completions
+- [x] Implement tool calling for responses API
+- [x] Complete streaming implementation
+- [x] Add comprehensive error handling
+- [x] Test feature parity with chat completions
 
 ### Phase 3 Tasks
-- [ ] Write comprehensive test suite
-- [ ] Update documentation and examples
-- [ ] Create migration guide
-- [ ] Performance benchmarking
+- [x] Write comprehensive test suite
+- [x] Update documentation and examples
+- [x] Create migration guide
+- [x] Performance benchmarking
 
 ### Phase 4 Tasks
-- [ ] Integrate with assistant system
+- [x] Integrate with assistant system
 - [ ] Optimize performance
-- [ ] Final testing and validation
+- [x] Final testing and validation
 - [ ] Release preparation
 
 ## Notes

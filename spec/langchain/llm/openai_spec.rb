@@ -950,6 +950,167 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
     end
 
+    context "with streaming and tool_calls" do
+      let(:tools) do
+        [{
+          "type" => "function",
+          "function" => {
+            "name" => "foo",
+            "parameters" => {
+              "type" => "object",
+              "properties" => {
+                "value" => {
+                  "type" => "string"
+                }
+              }
+            },
+            "required" => ["value"]
+          }
+        }]
+      end
+      let(:chunk_deltas) do
+        [
+          {"role" => "assistant", "content" => nil},
+          {"tool_calls" => [{"index" => 0, "id" => "call_123456", "type" => "function", "function" => {"name" => "foo", "arguments" => ""}}]},
+          {"tool_calls" => [{"index" => 0, "function" => {"arguments" => "{\"va"}}]},
+          {"tool_calls" => [{"index" => 0, "function" => {"arguments" => "lue\":"}}]},
+          {"tool_calls" => [{"index" => 0, "function" => {"arguments" => " \"my_s"}}]},
+          {"tool_calls" => [{"index" => 0, "function" => {"arguments" => "trin"}}]},
+          {"tool_calls" => [{"index" => 0, "function" => {"arguments" => "g\"}"}}]}
+        ]
+      end
+      let(:chunks) { chunk_deltas.map { |delta| {"id" => "resp-abcdefg", "choices" => [{"index" => 0, "delta" => delta}]} } }
+      let(:expected_tool_calls) do
+        [
+          {"id" => "call_123456", "type" => "function", "function" => {"name" => "foo", "arguments" => "{\"value\": \"my_string\"}"}}
+        ]
+      end
+
+      it "handles streaming responses correctly" do
+        allow(responses_subject.client).to receive(:responses) do |parameters|
+          chunks.each do |chunk|
+            parameters[:parameters][:stream].call(chunk)
+          end
+          chunks.last
+        end
+
+        response = responses_subject.chat(messages: [content: prompt, role: "user"], tools:) do |chunk|
+          chunk
+        end
+
+        expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+        expect(response.raw_response.dig("choices", 0, "message", "tool_calls")).to eq(expected_tool_calls)
+      end
+    end
+
+    context "with context and examples" do
+      let(:context) { "You are a chatbot" }
+      let(:examples) do
+        [
+          {role: "user", content: "Hello"},
+          {role: "assistant", content: "Hi. How can I assist you today?"}
+        ]
+      end
+      let(:history) do
+        [
+          {role: "system", content: context},
+          {role: "user", content: "Hello"},
+          {role: "assistant", content: "Hi. How can I assist you today?"},
+          {role: "user", content: prompt}
+        ]
+      end
+
+      context "when last message is from user and prompt is present" do
+        let(:messages) do
+          [
+            {role: "system", content: context},
+            {role: "user", content: "Hello"},
+            {role: "assistant", content: "Hi. How can I assist you today?"},
+            {role: "user", content: "I want to ask a question"}
+          ]
+        end
+        let(:history) do
+          [
+            {role: "system", content: context},
+            {role: "user", content: "Hello"},
+            {role: "assistant", content: "Hi. How can I assist you today?"},
+            {role: "user", content: "I want to ask a question\n#{prompt}"}
+          ]
+        end
+      end
+    end
+
+    context "with streaming" do
+      let(:streamed_response_chunk) do
+        {
+          "id" => "resp-7Hcl1sXOtsaUBKJGGhNujEIwhauaD",
+          "choices" => [{"index" => 0, "delta" => {"content" => answer}, "finish_reason" => nil}]
+        }
+      end
+      let(:token_usage) do
+        {
+          "usage" => {"prompt_tokens" => 10, "completion_tokens" => 11, "total_tokens" => 12}
+        }
+      end
+
+      it "handles streaming responses correctly" do
+        allow(responses_subject.client).to receive(:responses) do |parameters|
+          parameters[:parameters][:stream].call(streamed_response_chunk)
+          parameters[:parameters][:stream].call(token_usage)
+        end
+        response = responses_subject.chat(messages: [content: prompt, role: "user"]) do |chunk|
+          chunk
+        end
+        expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+        expect(response.prompt_tokens).to eq(10)
+        expect(response.completion_tokens).to eq(11)
+        expect(response.total_tokens).to eq(12)
+      end
+    end
+
+    context "with streaming and multiple choices n=2" do
+      let(:answer) { "Hello how are you?" }
+      let(:answer_2) { "Alternative answer" }
+      let(:streamed_response_chunk) do
+        {
+          "id" => "resp-7Hcl1sXOtsaUBKJGGhNujEIwhauaD",
+          "choices" => [{"index" => 0, "delta" => {"content" => answer}, "finish_reason" => "stop"}]
+        }
+      end
+      let(:streamed_response_chunk_2) do
+        {
+          "id" => "resp-7Hcl1sXOtsaUBKJGGhNujEIwhauaD",
+          "choices" => [{"index" => 1, "delta" => {"content" => answer_2}, "finish_reason" => "stop"}]
+        }
+      end
+      let(:token_usage) do
+        {
+          "usage" => {"prompt_tokens" => 10, "completion_tokens" => 11, "total_tokens" => 12}
+        }
+      end
+
+      it "handles streaming responses correctly" do
+        allow(responses_subject.client).to receive(:responses) do |parameters|
+          parameters[:parameters][:stream].call(streamed_response_chunk)
+          parameters[:parameters][:stream].call(streamed_response_chunk_2)
+          parameters[:parameters][:stream].call(token_usage)
+        end
+        response = responses_subject.chat(messages: [content: prompt, role: "user"], n: 2) do |chunk|
+          chunk
+        end
+        expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+        expect(response.completions).to eq(
+          [
+            {"index" => 0, "message" => {"role" => "assistant", "content" => answer}, "finish_reason" => "stop"},
+            {"index" => 1, "message" => {"role" => "assistant", "content" => answer_2}, "finish_reason" => "stop"}
+          ]
+        )
+        expect(response.prompt_tokens).to eq(10)
+        expect(response.completion_tokens).to eq(11)
+        expect(response.total_tokens).to eq(12)
+      end
+    end
+
     context "with failed API call" do
       let(:response) do
         {"error" => {"code" => 400, "message" => "User location is not supported for the API use.", "type" => "invalid_request_error"}}
