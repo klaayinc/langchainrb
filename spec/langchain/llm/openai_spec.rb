@@ -12,6 +12,15 @@ RSpec.describe Langchain::LLM::OpenAI do
       expect { subject }.not_to raise_error
     end
 
+    it "initialize with default arguments" do
+      expect { described_class.new(api_key: "123") }.not_to raise_error
+    end
+
+    it "sets the defaults" do
+      expect(subject.defaults[:chat_model]).to eq("gpt-4o-mini")
+      expect(subject.defaults[:embedding_model]).to eq("text-embedding-3-small")
+    end
+
     it "forwards the Langchain logger to the client" do
       f_mock = double("f_mock", response: nil)
 
@@ -99,6 +108,38 @@ RSpec.describe Langchain::LLM::OpenAI do
         subject
         expect(subject.client).to receive(:chat).with(parameters: hash_including({response_format: {type: "text"}})).and_return({})
         subject.chat(messages: [{role: "user", content: "Hello json!"}], response_format: {type: "text"})
+      end
+    end
+
+    context "with reasoning models and Responses API" do
+      it "raises an error when trying to use o1 model with Responses API" do
+        expect {
+          described_class.new(
+            api_key: "123",
+            use_responses_api: true,
+            default_options: {chat_model: "o1"}
+          )
+        }.to raise_error(ArgumentError, "Reasoning models (o1, o3) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
+
+      it "raises an error when trying to use o3 model with Responses API" do
+        expect {
+          described_class.new(
+            api_key: "123",
+            use_responses_api: true,
+            default_options: {chat_model: "o3"}
+          )
+        }.to raise_error(ArgumentError, "Reasoning models (o1, o3) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
+
+      it "allows using reasoning models without Responses API" do
+        expect {
+          described_class.new(
+            api_key: "123",
+            use_responses_api: false,
+            default_options: {chat_model: "o3"}
+          )
+        }.not_to raise_error
       end
     end
   end
@@ -858,6 +899,26 @@ RSpec.describe Langchain::LLM::OpenAI do
       )
 
       expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+    end
+
+    context "with reasoning models" do
+      it "raises an error when trying to use o1 model with Responses API" do
+        expect {
+          responses_subject.chat(
+            messages: [{role: "user", content: "What is the meaning of life?"}],
+            model: "o1"
+          )
+        }.to raise_error(ArgumentError, "Reasoning models (o1, o3) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
+
+      it "raises an error when trying to use o3 model with Responses API" do
+        expect {
+          responses_subject.chat(
+            messages: [{role: "user", content: "What is the meaning of life?"}],
+            model: "o3"
+          )
+        }.to raise_error(ArgumentError, "Reasoning models (o1, o3) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
     end
 
     context "with prompt" do

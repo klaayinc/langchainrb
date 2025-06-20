@@ -25,6 +25,9 @@ module Langchain::LLM
       "text-embedding-3-small" => 1536
     }.freeze
 
+    # Models that are not supported by the Responses API
+    REASONING_MODELS = %w[o1 o3].freeze
+
     # Initialize an OpenAI LLM instance
     #
     # @param api_key [String] The API key to use
@@ -41,6 +44,12 @@ module Langchain::LLM
 
       @defaults = DEFAULTS.merge(default_options)
       @use_responses_api = use_responses_api
+      
+      # Validate that reasoning models are not used with Responses API
+      if @use_responses_api && REASONING_MODELS.include?(@defaults[:chat_model])
+        raise ArgumentError.new("Reasoning models (#{REASONING_MODELS.join(', ')}) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
+      
       chat_parameters.update(
         model: {default: @defaults[:chat_model]},
         logprobs: {},
@@ -120,6 +129,12 @@ module Langchain::LLM
     # @option params [Array<Hash>] :messages List of messages comprising the conversation so far
     # @option params [String] :model ID of the model to use
     def chat(params = {}, &block)
+      # Validate that reasoning models are not used with Responses API
+      model = params[:model] || @defaults[:chat_model]
+      if @use_responses_api && REASONING_MODELS.include?(model)
+        raise ArgumentError.new("Reasoning models (#{REASONING_MODELS.join(', ')}) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
+      
       if @use_responses_api
         responses_chat(params, &block)
       else
