@@ -1373,4 +1373,140 @@ RSpec.describe Langchain::Assistant do
       end
     end
   end
+
+  context "when llm is OpenAI with Responses API" do
+    let(:llm) { Langchain::LLM::OpenAI.new(api_key: "123", use_responses_api: true) }
+    let(:calculator) { Langchain::Tool::Calculator.new }
+    let(:instructions) { "You are an expert assistant" }
+
+    subject {
+      described_class.new(
+        llm: llm,
+        tools: [calculator],
+        instructions: instructions
+      )
+    }
+
+    describe "#run" do
+      let(:raw_responses_response) do
+        {
+          "id" => "resp-96QTYLFcp0haHHRhnqvTYL288357W",
+          "object" => "response",
+          "created" => 1711318768,
+          "model" => "gpt-4o-mini-2024-07-18",
+          "choices" => [
+            {
+              "index" => 0,
+              "message" => {
+                "role" => "assistant",
+                "content" => nil,
+                "tool_calls" => [
+                  {
+                    "id" => "call_9TewGANaaIjzY31UCpAAGLeV",
+                    "type" => "function",
+                    "function" => {"name" => "langchain_tool_calculator__execute", "arguments" => "{\"input\":\"2+2\"}"}
+                  }
+                ]
+              },
+              "finish_reason" => "tool_calls"
+            }
+          ],
+          "usage" => {"prompt_tokens" => 91, "completion_tokens" => 18, "total_tokens" => 109}
+        }
+      end
+
+      context "when auto_tool_execution is false" do
+        before do
+          allow(subject.llm).to receive(:chat)
+            .with(
+              messages: [
+                {role: "system", content: [{type: "text", text: instructions}]},
+                {role: "user", content: [{type: "text", text: "Please calculate 2+2"}]}
+              ],
+              tools: calculator.class.function_schemas.to_openai_format,
+              tool_choice: "auto",
+              parallel_tool_calls: true
+            )
+            .and_return(Langchain::LLM::OpenAIResponsesResponse.new(raw_responses_response))
+
+          subject.add_message(role: "user", content: "Please calculate 2+2")
+        end
+
+        it "runs the assistant using Responses API" do
+          subject.run(auto_tool_execution: false)
+
+          expect(subject.messages.last.role).to eq("assistant")
+          expect(subject.messages.last.tool_calls).to eq([raw_responses_response["choices"][0]["message"]["tool_calls"]][0])
+        end
+
+        it "records the used tokens totals" do
+          subject.run(auto_tool_execution: false)
+
+          expect(subject.total_tokens).to eq(109)
+          expect(subject.total_prompt_tokens).to eq(91)
+          expect(subject.total_completion_tokens).to eq(18)
+        end
+      end
+
+      context "when auto_tool_execution is true" do
+        let(:raw_responses_response2) do
+          {
+            "id" => "resp-96P6eEMDDaiwzRIHJZAliYHQ8ov3q",
+            "object" => "response",
+            "created" => 1711313504,
+            "model" => "gpt-4o-mini-2024-07-18",
+            "choices" => [{"index" => 0, "message" => {"role" => "assistant", "content" => "The result of 2 + 2 is 4."}, "finish_reason" => "stop"}],
+            "usage" => {"prompt_tokens" => 121, "completion_tokens" => 13, "total_tokens" => 134}
+          }
+        end
+
+        before do
+          allow(subject.llm).to receive(:chat)
+            .with(
+              messages: [
+                {role: "system", content: [{type: "text", text: instructions}]},
+                {role: "user", content: [{type: "text", text: "Please calculate 2+2"}]},
+                {role: "assistant", tool_calls: [
+                  {
+                    "function" => {"arguments" => "{\"input\":\"2+2\"}", "name" => "langchain_tool_calculator__execute"},
+                    "id" => "call_9TewGANaaIjzY31UCpAAGLeV",
+                    "type" => "function"
+                  }
+                ]},
+                {content: [{type: "text", text: "4.0"}], role: "tool", tool_call_id: "call_9TewGANaaIjzY31UCpAAGLeV"}
+              ],
+              tools: calculator.class.function_schemas.to_openai_format,
+              tool_choice: "auto",
+              parallel_tool_calls: true
+            )
+            .and_return(Langchain::LLM::OpenAIResponsesResponse.new(raw_responses_response2))
+
+          allow(subject.tools[0]).to receive(:execute).with(
+            input: "2+2"
+          ).and_return("4.0")
+
+          subject.add_message(role: "user", content: "Please calculate 2+2")
+          subject.add_message(role: "assistant", tool_calls: raw_responses_response["choices"][0]["message"]["tool_calls"])
+        end
+
+        it "runs the assistant and automatically executes tool calls using Responses API" do
+          subject.run(auto_tool_execution: true)
+
+          expect(subject.messages[-2].role).to eq("tool")
+          expect(subject.messages[-2].content).to eq("4.0")
+
+          expect(subject.messages[-1].role).to eq("assistant")
+          expect(subject.messages[-1].content).to eq("The result of 2 + 2 is 4.")
+        end
+
+        it "records the used tokens totals" do
+          subject.run(auto_tool_execution: true)
+
+          expect(subject.total_tokens).to eq(134)
+          expect(subject.total_prompt_tokens).to eq(121)
+          expect(subject.total_completion_tokens).to eq(13)
+        end
+      end
+    end
+  end
 end
