@@ -32,7 +32,7 @@ module Langchain
     # @param llm [Langchain::LLM::Base] LLM instance that the assistant will use
     # @param tools [Array<Langchain::Tool::Base>] Tools that the assistant has access to
     # @param instructions [String] The system instructions
-    # @param tool_choice [String] Specify how tools should be selected. Options: "auto", "any", "none", or <specific function name>
+    # @param tool_choice [String] Specify how tools should be selected. Options: "auto", "required", "none", or <specific function name>
     # @param parallel_tool_calls [Boolean] Whether or not to run tools in parallel
     # @param messages [Array<Langchain::Assistant::Messages::Base>] The messages
     # @param add_message_callback [Proc] A callback function (Proc or lambda) that is called when any message is added to the conversation
