@@ -114,6 +114,32 @@ RSpec.describe Langchain::Assistant do
         expect(subject.messages.first.image_url).to eq("https://example.com/image.jpg")
       end
 
+      it "adds a message with input_audio" do
+        message_with_audio = { role: "user", content: "hello", input_audio: { data: "abcdef", format: "mp3" } }
+        subject = described_class.new(llm: llm, messages: [])
+
+        expect {
+          subject.add_message(**message_with_audio)
+      }.to change { subject.messages.count }.from(0).to(1)
+        expect(subject.messages.first.role).to eq("user")
+        expect(subject.messages.first.content).to eq("hello")
+        expect(subject.messages.first.input_audio[:data]).to eq("abcdef")
+        expect(subject.messages.first.input_audio[:format]).to eq("mp3")
+      end
+
+      it "adds a message with file" do
+        message_with_file = { role: "user", content: "hello", file: { data: "abcdef", filename: "example.pdf" } }
+        subject = described_class.new(llm: llm, messages: [])
+
+        expect {
+          subject.add_message(**message_with_file)
+      }.to change { subject.messages.count }.from(0).to(1)
+        expect(subject.messages.first.role).to eq("user")
+        expect(subject.messages.first.content).to eq("hello")
+        expect(subject.messages.first.file[:data]).to eq("abcdef")
+        expect(subject.messages.first.file[:filename]).to eq("example.pdf")
+      end
+
       it "calls the add_message_callback with the message" do
         callback = double("callback", call: true)
         subject = described_class.new(llm: llm, messages: [], add_message_callback: callback)
