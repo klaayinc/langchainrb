@@ -179,6 +179,32 @@ module Langchain::LLM
       raise Langchain::LLM::ApiError.new "OpenAI API error: #{response.dig("error", "message")}" if response&.dig("error")
 
       response
+    rescue Faraday::Error => e
+      raise unless e.response.respond_to?(:dig)
+
+      req_method = e.response.dig(:request, :method)
+      req_url = e.response.dig(:request, :url)
+      req_params = e.response.dig(:request, :params)
+      req_headers = e.response.dig(:request, :headers)
+      req_body = e.response.dig(:request, :body)
+      res_status = e.response[:status]
+      res_headers = e.response[:headers]
+      res_body = e.response[:body]
+
+      raise Langchain::LLM::ApiError.new <<~ERR
+        OpenAI API error: Server responded with #{res_status}
+        --- Request ---
+        #{req_method.upcase} #{req_url} #{req_params}
+        Headers:
+        #{req_headers}
+        Body:
+        #{req_body}
+        --- Response ---
+        Headers:
+        #{res_headers}
+        Body:
+        #{res_body}
+      ERR
     end
 
     def response_from_chunks
