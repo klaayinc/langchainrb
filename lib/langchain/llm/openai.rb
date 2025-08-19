@@ -191,7 +191,7 @@ module Langchain::LLM
       res_headers = e.response[:headers]
       res_body = e.response[:body]
 
-      raise Langchain::LLM::ApiError.new <<~ERR
+      new_e = Langchain::LLM::ApiError.new <<~ERR
         OpenAI API error: Server responded with #{res_status}
         --- Request ---
         #{req_method.upcase} #{req_url} #{req_params}
@@ -205,6 +205,12 @@ module Langchain::LLM
         Body:
         #{res_body}
       ERR
+
+      if Object.const_defined?("Sentry")
+        Sentry.capture_exception(new_e)
+      end
+
+      raise new_e
     end
 
     def response_from_chunks
