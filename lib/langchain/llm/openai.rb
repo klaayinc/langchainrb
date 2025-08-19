@@ -179,6 +179,8 @@ module Langchain::LLM
       raise Langchain::LLM::ApiError.new "OpenAI API error: #{response.dig("error", "message")}" if response&.dig("error")
 
       response
+    rescue Faraday::Error => e
+      raise Langchain::LLM::ApiError.new "OpenAI API error: #{e.response_status} #{e.response_body}"
     end
 
     def response_from_chunks
