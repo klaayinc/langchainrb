@@ -180,6 +180,10 @@ module Langchain::LLM
 
       response
     rescue Faraday::Error => e
+      if Object.const_defined?("Harpoon")
+        Harpoon.create(issue: "openai_transient_error", event: e.class, payload: e.response)
+      end
+
       raise unless e.response.respond_to?(:dig)
 
       req_method = e.response.dig(:request, :method)
