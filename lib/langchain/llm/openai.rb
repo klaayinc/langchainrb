@@ -25,11 +25,15 @@ module Langchain::LLM
       "text-embedding-3-small" => 1536
     }.freeze
 
+    # Models that are not supported by the Responses API
+    REASONING_MODELS = %w[o1 o3].freeze
+
     # Initialize an OpenAI LLM instance
     #
     # @param api_key [String] The API key to use
     # @param client_options [Hash] Options to pass to the OpenAI::Client constructor
-    def initialize(api_key:, llm_options: {}, default_options: {})
+    # @param use_responses_api [Boolean] Whether to use the Responses API instead of Chat Completions API
+    def initialize(api_key:, llm_options: {}, default_options: {}, use_responses_api: false)
       depends_on "ruby-openai", req: "openai"
 
       llm_options[:log_errors] = Langchain.logger.debug? unless llm_options.key?(:log_errors)
@@ -39,6 +43,13 @@ module Langchain::LLM
       end
 
       @defaults = DEFAULTS.merge(default_options)
+      @use_responses_api = use_responses_api
+      
+      # Validate that reasoning models are not used with Responses API
+      if @use_responses_api && REASONING_MODELS.include?(@defaults[:chat_model])
+        raise ArgumentError.new("Reasoning models (#{REASONING_MODELS.join(', ')}) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
+      end
+      
       chat_parameters.update(
         model: {default: @defaults[:chat_model]},
         logprobs: {},
@@ -118,33 +129,17 @@ module Langchain::LLM
     # @option params [Array<Hash>] :messages List of messages comprising the conversation so far
     # @option params [String] :model ID of the model to use
     def chat(params = {}, &block)
-      parameters = chat_parameters.to_params(params)
-      parameters[:metadata] = params[:metadata] if params[:metadata]
-
-      raise ArgumentError.new("messages argument is required") if Array(parameters[:messages]).empty?
-      raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
-      if parameters[:tool_choice] && Array(parameters[:tools]).empty?
-        raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
+      # Validate that reasoning models are not used with Responses API
+      model = params[:model] || @defaults[:chat_model]
+      if @use_responses_api && REASONING_MODELS.include?(model)
+        raise ArgumentError.new("Reasoning models (#{REASONING_MODELS.join(', ')}) are not supported by the Responses API. Please use the traditional Chat Completions API instead.")
       end
-
-      if block
-        @response_chunks = []
-        parameters[:stream_options] = {include_usage: true}
-        parameters[:stream] = proc do |chunk, _bytesize|
-          chunk_content = chunk.dig("choices", 0) || {}
-          @response_chunks << chunk
-          yield chunk_content
-        end
+      
+      if @use_responses_api
+        responses_chat(params, &block)
+      else
+        chat_completions_chat(params, &block)
       end
-
-      response = with_api_error_handling do
-        client.chat(parameters: parameters)
-      end
-
-      response = response_from_chunks if block
-      reset_response_chunks
-
-      Langchain::LLM::OpenAIResponse.new(response)
     end
 
     # Generate a summary for a given text
@@ -211,6 +206,119 @@ module Langchain::LLM
       end
 
       raise new_e
+    end
+
+    def chat_completions_chat(params = {}, &block)
+      parameters = chat_parameters.to_params(params)
+      parameters[:metadata] = params[:metadata] if params[:metadata]
+
+      raise ArgumentError.new("messages argument is required") if Array(parameters[:messages]).empty?
+      raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
+      if parameters[:tool_choice] && Array(parameters[:tools]).empty?
+        raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
+      end
+
+      if block
+        @response_chunks = []
+        parameters[:stream_options] = {include_usage: true}
+        parameters[:stream] = proc do |chunk, _bytesize|
+          chunk_content = chunk.dig("choices", 0) || {}
+          @response_chunks << chunk
+          yield chunk_content
+        end
+      end
+
+      response = with_api_error_handling do
+        client.chat(parameters: parameters)
+      end
+
+      response = response_from_chunks if block
+      reset_response_chunks
+
+      Langchain::LLM::OpenAIResponse.new(response)
+    end
+
+    def responses_chat(params = {}, &block)
+      parameters = chat_parameters.to_params(params)
+      parameters[:metadata] = params[:metadata] if params[:metadata]
+
+      # Transform parameters for Responses API
+      # The Responses API expects 'input' instead of 'messages'
+      if parameters[:messages]
+        parameters[:input] = parameters.delete(:messages)
+        
+        # Transform content format for Responses API
+        # Responses API expects 'input_text' instead of 'text'
+        if parameters[:input].is_a?(Array)
+          parameters[:input].each do |message|
+            if message[:content].is_a?(Array)
+              message[:content].each do |content_item|
+                if content_item[:type] == "text"
+                  content_item[:type] = "input_text"
+                end
+              end
+            end
+          end
+        end
+      end
+
+      # Handle other parameter differences for Responses API
+      # Remove parameters that are not supported by Responses API
+      parameters.delete(:logprobs) if parameters[:logprobs]
+      parameters.delete(:top_logprobs) if parameters[:top_logprobs]
+      parameters.delete(:n) if parameters[:n]  # Responses API doesn't support multiple completions
+      
+      # Transform tools format for Responses API
+      # Responses API requires 'name' at top level, not inside 'function'
+      if parameters[:tools] && parameters[:tools].is_a?(Array)
+        parameters[:tools].each do |tool|
+          if tool.is_a?(Hash)
+            # Handle both symbol and string keys
+            function_obj = tool[:function] || tool["function"]
+            if function_obj
+              name = function_obj[:name] || function_obj["name"]
+              if name
+                # Move name from function to top level for Responses API
+                tool[:name] = name
+                tool["name"] = name  # Ensure string key for API
+                function_obj.delete(:name)
+                function_obj.delete("name")
+              end
+            end
+          end
+        end
+      end
+      
+      # The Responses API might have different parameter names for some options
+      # We'll keep the standard parameters and let the API handle validation
+
+      # Validate required parameters after transformation
+      raise ArgumentError.new("input argument is required") if Array(parameters[:input]).empty?
+      raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
+      if parameters[:tool_choice] && Array(parameters[:tools]).empty?
+        raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
+      end
+
+      if block
+        @response_chunks = []
+        # Responses API has different streaming parameters
+        # Remove unsupported streaming options
+        parameters.delete(:stream_options) if parameters[:stream_options]
+        parameters[:stream] = proc do |chunk, _bytesize|
+          chunk_content = chunk.dig("choices", 0) || {}
+          @response_chunks << chunk
+          yield chunk_content
+        end
+      end
+
+      response = with_api_error_handling do
+        client.responses.create(parameters: parameters)
+      end
+
+      response = response_from_chunks if block
+      reset_response_chunks
+
+      Langchain::LLM::OpenAIResponsesResponse.new(response)
     end
 
     def response_from_chunks

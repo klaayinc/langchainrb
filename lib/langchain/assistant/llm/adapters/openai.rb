@@ -5,6 +5,10 @@ module Langchain
     module LLM
       module Adapters
         class OpenAI < Base
+          def initialize(llm = nil)
+            @llm = llm
+          end
+
           # Build the chat parameters for the OpenAI LLM
           #
           # @param messages [Array] The messages
@@ -24,7 +28,8 @@ module Langchain
             params = {messages: messages}
             params[:metadata] = metadata if metadata
             if tools.any?
-              params[:tools] = build_tools(tools)
+              built_tools = build_tools(tools)
+              params[:tools] = transform_tools_for_responses_api(built_tools)
               params[:tool_choice] = build_tool_choice(tool_choice)
               # Temporary fix because OpenAI o1/o3/reasoning models don't support `parallel_tool_calls` parameter.
               # Set `Assistant.new(parallel_tool_calls: nil, ...)` to avoid the error.
@@ -68,6 +73,29 @@ module Langchain
           # Build the tools for the OpenAI LLM
           def build_tools(tools)
             tools.map { |tool| tool.class.function_schemas.to_openai_format }.flatten
+          end
+
+          # Check if the LLM is using Responses API
+          def responses_api?
+            @llm.respond_to?(:use_responses_api) && @llm.use_responses_api
+          end
+
+          # Transform tools for Responses API if needed
+          def transform_tools_for_responses_api(tools)
+            return tools unless responses_api?
+            
+            tools.map do |tool|
+              if tool.is_a?(Hash) && tool["function"] && tool["function"]["name"]
+                # Move name from function to top level for Responses API
+                transformed_tool = tool.dup
+                transformed_tool["name"] = tool["function"]["name"]
+                transformed_tool["function"] = tool["function"].dup
+                transformed_tool["function"].delete("name")
+                transformed_tool
+              else
+                tool
+              end
+            end
           end
 
           # Get the allowed assistant.tool_choice values for OpenAI

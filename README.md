@@ -166,6 +166,12 @@ gemini_llm = Langchain::LLM::GoogleGemini.new(api_key: ENV["GOOGLE_GEMINI_API_KE
 
 # Using OpenAI
 openai_llm = Langchain::LLM::OpenAI.new(api_key: ENV["OPENAI_API_KEY"])
+
+# Using OpenAI with Responses API (faster, more efficient)
+openai_responses_llm = Langchain::LLM::OpenAI.new(
+  api_key: ENV["OPENAI_API_KEY"], 
+  use_responses_api: true
+)
 ```
 
 ## Response Objects
@@ -182,6 +188,35 @@ Each LLM method returns a response object that provides a consistent interface f
 
 > [!NOTE]
 > While the core interface is consistent across providers, some LLMs may offer additional features or parameters. Consult the documentation for each LLM class to learn about provider-specific capabilities and options.
+
+### OpenAI Responses API
+
+OpenAI provides a newer, more efficient Responses API as an alternative to the traditional Chat Completions API. The Responses API offers:
+
+- **Faster response times** - Optimized for speed and efficiency
+- **Better streaming capabilities** - Improved real-time response handling
+- **Token efficiency** - More efficient token usage
+- **Same functionality** - Supports all the same features as Chat Completions
+
+To use the Responses API, simply add the `use_responses_api: true` parameter when initializing the OpenAI LLM:
+
+```ruby
+# Traditional Chat Completions API (default)
+llm = Langchain::LLM::OpenAI.new(api_key: "your-key")
+response = llm.chat(messages: [{role: "user", content: "Hello"}])
+
+# Responses API (opt-in)
+llm = Langchain::LLM::OpenAI.new(
+  api_key: "your-key", 
+  use_responses_api: true
+)
+response = llm.chat(messages: [{role: "user", content: "Hello"}])
+```
+
+The Responses API maintains full backward compatibility with the Chat Completions API. All methods, parameters, and response objects work identically, so you can easily switch between APIs without changing your application code.
+
+> [!TIP]
+> The Responses API is recommended for new applications and provides better performance. You can gradually migrate existing applications by simply adding the `use_responses_api: true` parameter.
 
 ### Prompt Management
 

@@ -6,7 +6,15 @@ require "reline"
 # gem install reline
 # or add `gem "reline"` to your Gemfile
 
+# Using traditional Chat Completions API
 openai = Langchain::LLM::OpenAI.new(api_key: ENV["OPENAI_API_KEY"])
+
+# Alternative: Using Responses API for better performance
+# openai = Langchain::LLM::OpenAI.new(
+#   api_key: ENV["OPENAI_API_KEY"],
+#   use_responses_api: true
+# )
+
 assistant = Langchain::Assistant.new(
   llm: openai,
   instructions: "You are a Meteorologist Assistant that is able to pull the weather for any location",
