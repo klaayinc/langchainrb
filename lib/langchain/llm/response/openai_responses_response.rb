@@ -13,11 +13,29 @@ module Langchain::LLM
     end
 
     def completion
-      completions&.dig(0, "message", "content")
+      # Responses API uses 'output' instead of 'choices'
+      output = raw_response.dig("output")
+      return nil unless output&.any?
+      
+      # Look for message type output first
+      message_output = output.find { |item| item["type"] == "message" }
+      if message_output && message_output.dig("content")
+        # Handle array of content items
+        if message_output["content"].is_a?(Array)
+          text_content = message_output["content"].find { |c| c["type"] == "output_text" }
+          return text_content["text"] if text_content
+        end
+        
+        # Handle direct content string (fallback)
+        return message_output["content"] if message_output["content"].is_a?(String)
+      end
+      
+      nil
     end
 
     def role
-      completions&.dig(0, "message", "role")
+      # Responses API doesn't have explicit roles in the same way
+      "assistant"
     end
 
     def chat_completion
@@ -25,10 +43,20 @@ module Langchain::LLM
     end
 
     def tool_calls
-      if chat_completions.dig(0, "message").has_key?("tool_calls")
-        chat_completions.dig(0, "message", "tool_calls")
-      else
-        []
+      # Responses API uses 'output' with 'function_call' type
+      output = raw_response.dig("output")
+      return [] unless output&.any?
+      
+      function_calls = output.select { |item| item["type"] == "function_call" }
+      function_calls.map do |fc|
+        {
+          "id" => fc["call_id"],
+          "type" => "function",
+          "function" => {
+            "name" => fc["name"],
+            "arguments" => fc["arguments"] || "{}"
+          }
+        }
       end
     end
 
@@ -37,11 +65,26 @@ module Langchain::LLM
     end
 
     def completions
-      raw_response.dig("choices")
+      # Responses API uses 'output' instead of 'choices'
+      # Transform to Chat Completions format for compatibility
+      output = raw_response.dig("output")
+      return [] unless output&.any?
+      
+      [
+        {
+          "message" => {
+            "role" => "assistant",
+            "content" => completion,
+            "tool_calls" => tool_calls.any? ? tool_calls : nil
+          }.compact,
+          "finish_reason" => determine_finish_reason,
+          "index" => 0
+        }
+      ]
     end
 
     def chat_completions
-      raw_response.dig("choices")
+      completions
     end
 
     def embeddings
@@ -49,15 +92,24 @@ module Langchain::LLM
     end
 
     def prompt_tokens
-      raw_response.dig("usage", "prompt_tokens")
+      raw_response.dig("usage", "input_tokens") || raw_response.dig("usage", "prompt_tokens")
     end
 
     def completion_tokens
-      raw_response.dig("usage", "completion_tokens")
+      raw_response.dig("usage", "output_tokens") || raw_response.dig("usage", "completion_tokens")
     end
 
     def total_tokens
       raw_response.dig("usage", "total_tokens")
+    end
+
+    private
+
+    def determine_finish_reason
+      # Determine finish reason based on response status and output types
+      return "stop" if raw_response.dig("status") == "completed"
+      return "tool_calls" if tool_calls.any?
+      "stop"
     end
   end
 end 

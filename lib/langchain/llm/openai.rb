@@ -210,7 +210,58 @@ module Langchain::LLM
       parameters = chat_parameters.to_params(params)
       parameters[:metadata] = params[:metadata] if params[:metadata]
 
-      raise ArgumentError.new("messages argument is required") if Array(parameters[:messages]).empty?
+      # Transform parameters for Responses API
+      # The Responses API expects 'input' instead of 'messages'
+      if parameters[:messages]
+        parameters[:input] = parameters.delete(:messages)
+        
+        # Transform content format for Responses API
+        # Responses API expects 'input_text' instead of 'text'
+        if parameters[:input].is_a?(Array)
+          parameters[:input].each do |message|
+            if message[:content].is_a?(Array)
+              message[:content].each do |content_item|
+                if content_item[:type] == "text"
+                  content_item[:type] = "input_text"
+                end
+              end
+            end
+          end
+        end
+      end
+
+      # Handle other parameter differences for Responses API
+      # Remove parameters that are not supported by Responses API
+      parameters.delete(:logprobs) if parameters[:logprobs]
+      parameters.delete(:top_logprobs) if parameters[:top_logprobs]
+      parameters.delete(:n) if parameters[:n]  # Responses API doesn't support multiple completions
+      
+      # Transform tools format for Responses API
+      # Responses API requires 'name' at top level, not inside 'function'
+      if parameters[:tools] && parameters[:tools].is_a?(Array)
+        parameters[:tools].each do |tool|
+          if tool.is_a?(Hash)
+            # Handle both symbol and string keys
+            function_obj = tool[:function] || tool["function"]
+            if function_obj
+              name = function_obj[:name] || function_obj["name"]
+              if name
+                # Move name from function to top level for Responses API
+                tool[:name] = name
+                tool["name"] = name  # Ensure string key for API
+                function_obj.delete(:name)
+                function_obj.delete("name")
+              end
+            end
+          end
+        end
+      end
+      
+      # The Responses API might have different parameter names for some options
+      # We'll keep the standard parameters and let the API handle validation
+
+      # Validate required parameters after transformation
+      raise ArgumentError.new("input argument is required") if Array(parameters[:input]).empty?
       raise ArgumentError.new("model argument is required") if parameters[:model].to_s.empty?
       if parameters[:tool_choice] && Array(parameters[:tools]).empty?
         raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
@@ -218,7 +269,9 @@ module Langchain::LLM
 
       if block
         @response_chunks = []
-        parameters[:stream_options] = {include_usage: true}
+        # Responses API has different streaming parameters
+        # Remove unsupported streaming options
+        parameters.delete(:stream_options) if parameters[:stream_options]
         parameters[:stream] = proc do |chunk, _bytesize|
           chunk_content = chunk.dig("choices", 0) || {}
           @response_chunks << chunk

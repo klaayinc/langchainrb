@@ -1509,4 +1509,139 @@ RSpec.describe Langchain::Assistant do
       end
     end
   end
+
+  describe "Responses API Integration" do
+    let(:llm) { Langchain::LLM::OpenAI.new(api_key: "123", use_responses_api: true) }
+    let(:calculator) { Langchain::Tool::Calculator.new }
+    let(:assistant) { described_class.new(llm: llm, tools: [calculator]) }
+
+    context "with tool calling" do
+      let(:tool_call_response) do
+        {
+          "id" => "resp-tool-test",
+          "object" => "response",
+          "created_at" => Time.now.to_i,
+          "status" => "completed",
+          "model" => "gpt-4o-mini-2024-07-18",
+          "usage" => {
+            "input_tokens" => 50,
+            "output_tokens" => 20,
+            "total_tokens" => 70
+          },
+          "output" => [
+            {
+              "id" => "fc_test",
+              "type" => "function_call",
+              "status" => "completed",
+              "arguments" => "{\"input\":\"15*23\"}",
+              "call_id" => "call_test123",
+              "name" => "langchain_tool_calculator__execute"
+            }
+          ]
+        }
+      end
+
+      let(:text_response) do
+        {
+          "id" => "resp-text-test",
+          "object" => "response",
+          "created_at" => Time.now.to_i,
+          "status" => "completed",
+          "model" => "gpt-4o-mini-2024-07-18",
+          "usage" => {
+            "input_tokens" => 80,
+            "output_tokens" => 25,
+            "total_tokens" => 105
+          },
+          "output" => [
+            {
+              "id" => "msg_test",
+              "type" => "message",
+              "status" => "completed",
+              "content" => [
+                {
+                  "type" => "output_text",
+                  "text" => "The result of 15 multiplied by 23 is 345."
+                }
+              ],
+              "role" => "assistant"
+            }
+          ]
+        }
+      end
+
+      before do
+        # Mock the calculator tool execution
+        allow(calculator).to receive(:execute).with(input: "15*23").and_return("345.0")
+      end
+
+      it "successfully integrates with OpenAI Responses API for tool calling" do
+        # First call: tool call
+        allow(llm).to receive(:chat).and_return(
+          Langchain::LLM::OpenAIResponsesResponse.new(tool_call_response)
+        )
+
+        assistant.add_message(content: "What is 15 multiplied by 23?")
+        assistant.run(auto_tool_execution: false)
+
+        # Verify tool call was made
+        expect(assistant.messages.last.role).to eq("assistant")
+        expect(assistant.messages.last.tool_calls).to be_an(Array)
+        expect(assistant.messages.last.tool_calls.length).to eq(1)
+
+        tool_call = assistant.messages.last.tool_calls.first
+        expect(tool_call["function"]["name"]).to eq("langchain_tool_calculator__execute")
+        expect(tool_call["function"]["arguments"]).to eq("{\"input\":\"15*23\"}")
+      end
+
+      it "successfully executes tools and gets final response with Responses API" do
+        # First call: tool call
+        allow(llm).to receive(:chat).with(
+          hash_including(
+            messages: anything,
+            tools: anything
+          )
+        ).and_return(Langchain::LLM::OpenAIResponsesResponse.new(tool_call_response))
+
+        # Second call: text response after tool execution
+        allow(llm).to receive(:chat).with(
+          hash_including(
+            messages: anything
+          )
+        ).and_return(Langchain::LLM::OpenAIResponsesResponse.new(text_response))
+
+        assistant.add_message(content: "What is 15 multiplied by 23?")
+        assistant.run(auto_tool_execution: true)
+
+        # Verify the complete flow worked
+        expect(assistant.messages.length).to be >= 4 # user, assistant(tool), tool, assistant(text)
+        
+        # Check tool execution
+        tool_message = assistant.messages.find { |m| m.role == "tool" }
+        expect(tool_message).to be_present
+        expect(tool_message.content).to eq("345.0")
+
+        # Check final response
+        final_message = assistant.messages.last
+        expect(final_message.role).to eq("assistant")
+        expect(final_message.content).to eq("The result of 15 multiplied by 23 is 345.")
+      end
+
+      it "correctly transforms tool parameters for Responses API" do
+        expect(llm).to receive(:chat) do |parameters|
+          # Verify that tools have name at top level (Responses API format)
+          tools_param = parameters[:tools]
+          expect(tools_param).to be_an(Array)
+          expect(tools_param.first).to have_key("name")
+          expect(tools_param.first["name"]).to eq("langchain_tool_calculator__execute")
+          expect(tools_param.first["function"]).not_to have_key("name")
+          
+          Langchain::LLM::OpenAIResponsesResponse.new(tool_call_response)
+        end
+
+        assistant.add_message(content: "Calculate 2+2")
+        assistant.run(auto_tool_execution: false)
+      end
+    end
+  end
 end

@@ -844,9 +844,9 @@ RSpec.describe Langchain::LLM::OpenAI do
     let(:responses_subject) { described_class.new(api_key: "123", use_responses_api: true, **options) }
     let(:prompt) { "What is the meaning of life?" }
     let(:model) { "gpt-4o-mini" }
-    let(:n) { 1 }
     let(:history) { [content: prompt, role: "user"] }
-    let(:parameters) { {parameters: {n: n, messages: history, model: model}} }
+    # Responses API expects 'input' instead of 'messages' and doesn't support 'n' parameter
+    let(:parameters) { {parameters: {input: history, model: model}} }
     let(:answer) { "As an AI language model, I don't have feelings, but I'm functioning well. How can I assist you today?" }
     let(:answer_2) { "Alternative answer" }
     let(:choices) do
@@ -865,14 +865,28 @@ RSpec.describe Langchain::LLM::OpenAI do
       {
         "id" => "resp-9otuxUHnW84Zqu97VE1eKPmXVLAv0",
         "object" => "response",
-        "created" => 1721918375,
+        "created_at" => 1721918375,
+        "status" => "completed",
         "model" => "gpt-4o-mini-2024-07-18",
         "usage" => {
-          "prompt_tokens" => 14,
-          "completion_tokens" => 25,
+          "input_tokens" => 14,
+          "output_tokens" => 25,
           "total_tokens" => 39
         },
-        "choices" => choices
+        "output" => [
+          {
+            "id" => "msg_test",
+            "type" => "message",
+            "status" => "completed",
+            "content" => [
+              {
+                "type" => "output_text",
+                "text" => answer
+              }
+            ],
+            "role" => "assistant"
+          }
+        ]
       }
     end
 
@@ -941,26 +955,23 @@ RSpec.describe Langchain::LLM::OpenAI do
     end
 
     context "with multiple choices" do
-      let(:n) { 2 }
-      let(:choices) do
+      let(:single_choice) do
         [
           {
             "message" => {"role" => "assistant", "content" => answer},
             "finish_reason" => "stop",
             "index" => 0
-          },
-          {
-            "message" => {"role" => "assistant", "content" => answer_2},
-            "finish_reason" => "stop",
-            "index" => 1
           }
         ]
       end
 
-      it "returns multiple response messages" do
-        response = responses_subject.chat(messages: [content: prompt, role: "user"], model: model, n: 2)
+      it "returns single response message" do
+        # Responses API doesn't support 'n' parameter for multiple choices
+        # We'll test with a single choice instead
+        response = responses_subject.chat(messages: [content: prompt, role: "user"], model: model)
 
-        expect(response.completions).to eq(choices)
+        # Since we're not requesting multiple choices, we expect just one
+        expect(response.completions).to eq(single_choice)
       end
     end
 
@@ -975,7 +986,7 @@ RSpec.describe Langchain::LLM::OpenAI do
           {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "choices" => [{"index" => 0, "delta" => {"role" => "assistant"}}]},
           {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "choices" => [{"index" => 0, "delta" => {"content" => "Why did the chicken cross the road?"}}]},
           {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "choices" => [{"index" => 0, "delta" => {}, "finish_reason" => "stop"}]},
-          {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "usage" => {"prompt_tokens" => 5, "completion_tokens" => 10, "total_tokens" => 15}}
+          {"id" => chunk_id, "object" => "response.chunk", "created" => now, "model" => model_name, "usage" => {"input_tokens" => 5, "output_tokens" => 10, "total_tokens" => 15}}
         ]
       end
       let(:collected_yielded_chunks) { [] }
@@ -985,7 +996,8 @@ RSpec.describe Langchain::LLM::OpenAI do
       before do
         allow(responses_subject.client.responses).to receive(:create) do |parameters:|
           expect(parameters[:stream]).to be_a(Proc)
-          expect(parameters[:stream_options]).to eq({include_usage: true})
+          # Responses API doesn't support stream_options
+          expect(parameters[:stream_options]).to be_nil
           stream_chunks.each { |chunk| parameters[:stream].call(chunk, chunk.to_json.bytesize) }
           nil # Simulate nil return after streaming
         end
@@ -1146,7 +1158,7 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
       let(:token_usage) do
         {
-          "usage" => {"prompt_tokens" => 10, "completion_tokens" => 11, "total_tokens" => 12}
+          "usage" => {"input_tokens" => 10, "output_tokens" => 11, "total_tokens" => 12}
         }
       end
 
@@ -1275,6 +1287,159 @@ RSpec.describe Langchain::LLM::OpenAI do
 
       it "returns the tool_calls" do
         expect(subject.send(:tool_calls_from_choice_chunks, chunks)).to eq(expected_tool_calls)
+      end
+    end
+  end
+
+  describe "Responses API Tool Calling Integration" do
+    let(:responses_subject) { described_class.new(api_key: "123", use_responses_api: true) }
+    
+    context "with tools and tool calling" do
+      let(:tools) do
+        [{
+          "type" => "function",
+          "function" => {
+            "name" => "get_weather",
+            "description" => "Get the weather for a location",
+            "parameters" => {
+              "type" => "object",
+              "properties" => {
+                "location" => {
+                  "type" => "string",
+                  "description" => "The city and state"
+                }
+              },
+              "required" => ["location"]
+            }
+          }
+        }]
+      end
+
+      let(:tool_response) do
+        {
+          "id" => "resp-tool-test",
+          "object" => "response",
+          "created_at" => Time.now.to_i,
+          "status" => "completed",
+          "model" => "gpt-4o-mini-2024-07-18",
+          "usage" => {
+            "input_tokens" => 33,
+            "output_tokens" => 11,
+            "total_tokens" => 44
+          },
+          "output" => [
+            {
+              "id" => "fc_test",
+              "type" => "function_call",
+              "status" => "completed",
+              "arguments" => "{\"location\": \"San Francisco\"}",
+              "call_id" => "call_test123",
+              "name" => "get_weather"
+            }
+          ]
+        }
+      end
+
+      before do
+        allow(responses_subject.client.responses).to receive(:create).with(
+          hash_including(
+            parameters: hash_including(
+              input: anything,
+              tools: anything,
+              model: anything
+            )
+          )
+        ).and_return(tool_response)
+      end
+
+      it "successfully calls tools with Responses API" do
+        response = responses_subject.chat(
+          messages: [{role: "user", content: "What's the weather like in San Francisco?"}],
+          tools: tools
+        )
+
+        expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+        expect(response.tool_calls).to be_an(Array)
+        expect(response.tool_calls.length).to eq(1)
+        
+        tool_call = response.tool_calls.first
+        expect(tool_call["function"]["name"]).to eq("get_weather")
+        expect(tool_call["function"]["arguments"]).to eq("{\"location\": \"San Francisco\"}")
+        expect(tool_call["id"]).to eq("call_test123")
+      end
+
+      it "transforms tool parameters correctly for Responses API" do
+        # This test verifies that our parameter transformation works
+        expect(responses_subject.client.responses).to receive(:create) do |parameters:|
+          # Verify that tools have name at top level (Responses API format)
+          tools_param = parameters[:tools]
+          expect(tools_param).to be_an(Array)
+          expect(tools_param.first).to have_key("name")
+          expect(tools_param.first["name"]).to eq("get_weather")
+          expect(tools_param.first["function"]).not_to have_key("name")
+          
+          tool_response
+        end
+
+        responses_subject.chat(
+          messages: [{role: "user", content: "What's the weather like in San Francisco?"}],
+          tools: tools
+        )
+      end
+    end
+
+    context "with text response (no tool calling)" do
+      let(:text_response) do
+        {
+          "id" => "resp-text-test",
+          "object" => "response",
+          "created_at" => Time.now.to_i,
+          "status" => "completed",
+          "model" => "gpt-4o-mini-2024-07-18",
+          "usage" => {
+            "input_tokens" => 10,
+            "output_tokens" => 15,
+            "total_tokens" => 25
+          },
+          "output" => [
+            {
+              "id" => "msg_test",
+              "type" => "message",
+              "status" => "completed",
+              "content" => [
+                {
+                  "type" => "output_text",
+                  "text" => "Hello! How can I help you today?"
+                }
+              ],
+              "role" => "assistant"
+            }
+          ]
+        }
+      end
+
+      before do
+        allow(responses_subject.client.responses).to receive(:create).with(
+          hash_including(
+            parameters: hash_including(
+              input: anything,
+              model: anything
+            )
+          )
+        ).and_return(text_response)
+      end
+
+      it "successfully returns text responses with Responses API" do
+        response = responses_subject.chat(
+          messages: [{role: "user", content: "Hello!"}]
+        )
+
+        expect(response).to be_a(Langchain::LLM::OpenAIResponsesResponse)
+        expect(response.chat_completion).to eq("Hello! How can I help you today?")
+        expect(response.tool_calls).to eq([])
+        expect(response.prompt_tokens).to eq(10)
+        expect(response.completion_tokens).to eq(15)
+        expect(response.total_tokens).to eq(25)
       end
     end
   end
