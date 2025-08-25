@@ -173,44 +173,57 @@ module Langchain::LLM
     end
 
     def with_api_error_handling
-      response = yield
-      return if response.nil? || response.empty?
+      attempts = Integer(@defaults[:retry_attempts] || 0)
+      base_backoff = Float(@defaults[:retry_backoff_base] || 0.5)
+      tries = 0
 
-      raise Langchain::LLM::ApiError.new "OpenAI API error: #{response.dig("error", "message")}" if response&.dig("error")
+      begin
+        response = yield
+        return if response.nil? || response.empty?
 
-      response
-    rescue Faraday::Error => e
-      raise unless e.response.respond_to?(:dig)
+        raise Langchain::LLM::ApiError.new "OpenAI API error: #{response.dig("error", "message")}" if response&.dig("error")
 
-      req_method = e.response.dig(:request, :method)
-      req_url = e.response.dig(:request, :url)
-      req_params = e.response.dig(:request, :params)
-      req_headers = e.response.dig(:request, :headers)
-      req_body = e.response.dig(:request, :body)
-      res_status = e.response[:status]
-      res_headers = e.response[:headers]
-      res_body = e.response[:body]
+        response
+      rescue Faraday::Error => e
+        # Retry on transient HTTP statuses if configured
+        res_status = (e.response && e.response[:status])
+        if res_status && tries < attempts && (res_status == 429 || (res_status >= 500 && res_status < 600))
+          sleep(base_backoff * (2 ** tries))
+          tries += 1
+          retry
+        end
 
-      new_e = Langchain::LLM::ApiError.new <<~ERR
-        OpenAI API error: Server responded with #{res_status}
-        --- Request ---
-        #{req_method.upcase} #{req_url} #{req_params}
-        Headers:
-        #{req_headers}
-        Body:
-        #{req_body}
-        --- Response ---
-        Headers:
-        #{res_headers}
-        Body:
-        #{res_body}
-      ERR
+        raise unless e.response.respond_to?(:dig)
 
-      if Object.const_defined?("Sentry")
-        Sentry.capture_exception(new_e)
+        req_method = e.response.dig(:request, :method)
+        req_url = e.response.dig(:request, :url)
+        req_params = e.response.dig(:request, :params)
+        req_headers = e.response.dig(:request, :headers)
+        req_body = e.response.dig(:request, :body)
+        res_headers = e.response[:headers]
+        res_body = e.response[:body]
+
+        new_e = Langchain::LLM::ApiError.new <<~ERR
+          OpenAI API error: Server responded with #{res_status}
+          --- Request ---
+          #{req_method&.upcase} #{req_url} #{req_params}
+          Headers:
+          #{req_headers}
+          Body:
+          #{req_body}
+          --- Response ---
+          Headers:
+          #{res_headers}
+          Body:
+          #{res_body}
+        ERR
+
+        if Object.const_defined?("Sentry")
+          Sentry.capture_exception(new_e)
+        end
+
+        raise new_e
       end
-
-      raise new_e
     end
 
     def response_from_chunks
