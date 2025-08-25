@@ -853,8 +853,46 @@ RSpec.describe Langchain::LLM::OpenAI do
 
         expect {
           subject.chat(messages: messages, model: "gpt-4o-mini")
-        }.to raise_error(Langchain::LLM::ApiError, /OpenAI API error: Server responded with 429/)
+        }.to raise_error(Langchain::LLM::RateLimitError, /OpenAI API error: Server responded with 429/)
         expect(call_count).to eq(3) # initial try + 2 retries
+      end
+    end
+
+    context "timeouts and connection failures" do
+      let(:options) { {default_options: {retry_attempts: 1, retry_backoff_base: 0.0}} }
+
+      it "retries timeout once then raises TimeoutError" do
+        call_count = 0
+        allow(subject.client).to receive(:chat) do |parameters:|
+          call_count += 1
+          if call_count == 1
+            e = Faraday::TimeoutError.new("execution expired")
+            raise e
+          else
+            raise Faraday::TimeoutError.new("execution expired")
+          end
+        end
+        expect {
+          subject.chat(messages: messages, model: "gpt-4o-mini")
+        }.to raise_error(Langchain::LLM::TimeoutError, /timeout/i)
+        expect(call_count).to eq(2)
+      end
+
+      it "retries connection failed once then raises ConnectionError" do
+        call_count = 0
+        allow(subject.client).to receive(:chat) do |parameters:|
+          call_count += 1
+          if call_count == 1
+            e = Faraday::ConnectionFailed.new("Failed to open TCP connection")
+            raise e
+          else
+            raise Faraday::ConnectionFailed.new("Failed to open TCP connection")
+          end
+        end
+        expect {
+          subject.chat(messages: messages, model: "gpt-4o-mini")
+        }.to raise_error(Langchain::LLM::ConnectionError, /connection failed/i)
+        expect(call_count).to eq(2)
       end
     end
   end

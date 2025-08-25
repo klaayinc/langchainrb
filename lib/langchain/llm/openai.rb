@@ -185,12 +185,27 @@ module Langchain::LLM
 
         response
       rescue Faraday::Error => e
-        # Retry on transient HTTP statuses if configured
+        # Retry on transient HTTP statuses/timeouts/connection failures if configured
         res_status = (e.response && e.response[:status])
-        if res_status && tries < attempts && (res_status == 429 || (res_status >= 500 && res_status < 600))
+        transient_status = res_status && (res_status == 429 || (res_status >= 500 && res_status < 600))
+        is_timeout = defined?(Faraday::TimeoutError) && e.is_a?(Faraday::TimeoutError)
+        is_connection_failed = defined?(Faraday::ConnectionFailed) && e.is_a?(Faraday::ConnectionFailed)
+
+        if tries < attempts && (transient_status || is_timeout || is_connection_failed)
           sleep(base_backoff * (2 ** tries))
           tries += 1
           retry
+        end
+
+        # Timeouts/connection failures without response or after exhausting retries
+        if is_timeout
+          new_e = Langchain::LLM::TimeoutError.new("OpenAI API timeout: #{e.message}")
+          Sentry.capture_exception(new_e) if Object.const_defined?("Sentry")
+          raise new_e
+        elsif is_connection_failed
+          new_e = Langchain::LLM::ConnectionError.new("OpenAI API connection failed: #{e.message}")
+          Sentry.capture_exception(new_e) if Object.const_defined?("Sentry")
+          raise new_e
         end
 
         raise unless e.response.respond_to?(:dig)
@@ -203,7 +218,7 @@ module Langchain::LLM
         res_headers = e.response[:headers]
         res_body = e.response[:body]
 
-        new_e = Langchain::LLM::ApiError.new <<~ERR
+        message = <<~ERR
           OpenAI API error: Server responded with #{res_status}
           --- Request ---
           #{req_method&.upcase} #{req_url} #{req_params}
@@ -217,6 +232,21 @@ module Langchain::LLM
           Body:
           #{res_body}
         ERR
+
+        error_class = case res_status
+        when 400 then Langchain::LLM::BadRequestError
+        when 401 then Langchain::LLM::UnauthorizedError
+        when 403 then Langchain::LLM::ForbiddenError
+        when 404 then Langchain::LLM::NotFoundError
+        when 409 then Langchain::LLM::ConflictError
+        when 422 then Langchain::LLM::UnprocessableEntityError
+        when 429 then Langchain::LLM::RateLimitError
+        when 503 then Langchain::LLM::ServiceUnavailableError
+        when 500..599 then Langchain::LLM::ServerError
+        else Langchain::LLM::ApiError
+        end
+
+        new_e = error_class.new(message)
 
         if Object.const_defined?("Sentry")
           Sentry.capture_exception(new_e)
