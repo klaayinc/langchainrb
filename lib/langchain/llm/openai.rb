@@ -185,6 +185,9 @@ module Langchain::LLM
 
         response
       rescue Faraday::Error => e
+        if Object.const_defined?("Harpoon")
+          Harpoon.create(issue: "openai_transient_error", event: e.class, payload: (e.respond_to?(:response) ? e.response : nil))
+        end
         # Retry on transient HTTP statuses/timeouts/connection failures if configured
         res_status = (e.response && e.response[:status])
         transient_status = res_status && (res_status == 429 || (res_status >= 500 && res_status < 600))
