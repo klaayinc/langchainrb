@@ -2,6 +2,17 @@
 
 module Langchain::LLM
   class ApiError < StandardError; end
+  class BadRequestError < ApiError; end        # 400
+  class UnauthorizedError < ApiError; end      # 401
+  class ForbiddenError < ApiError; end         # 403
+  class NotFoundError < ApiError; end          # 404
+  class ConflictError < ApiError; end          # 409
+  class UnprocessableEntityError < ApiError; end # 422
+  class RateLimitError < ApiError; end         # 429
+  class ServerError < ApiError; end            # 5xx generic
+  class ServiceUnavailableError < ServerError; end # 503
+  class TimeoutError < ApiError; end
+  class ConnectionError < ApiError; end
 
   # A LLM is a language model consisting of a neural network with many parameters (typically billions of weights or more), trained on large quantities of unlabeled text using self-supervised learning or semi-supervised learning.
   #

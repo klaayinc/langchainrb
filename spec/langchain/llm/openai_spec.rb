@@ -799,6 +799,104 @@ RSpec.describe Langchain::LLM::OpenAI do
     end
   end
 
+  describe "retry/backoff" do
+    let(:prompt) { "Hello World" }
+    let(:messages) { [{role: "user", content: prompt}] }
+
+    context "when configured with retry attempts" do
+      let(:options) { {default_options: {retry_attempts: 2, retry_backoff_base: 0.0}} }
+
+      it "retries on 503 and eventually succeeds" do
+        call_count = 0
+
+        valid_response = {
+          "id" => "chatcmpl-xyz",
+          "object" => "chat.completion",
+          "created" => Time.now.to_i,
+          "model" => "gpt-4o-mini-2024-07-18",
+          "choices" => [
+            {"message" => {"role" => "assistant", "content" => "OK"}, "finish_reason" => "stop", "index" => 0}
+          ],
+          "usage" => {"prompt_tokens" => 1, "completion_tokens" => 1, "total_tokens" => 2}
+        }
+
+        allow(subject.client).to receive(:chat) do |parameters:|
+          call_count += 1
+          if call_count == 1
+            e = Faraday::Error.new("Service Unavailable")
+            e.define_singleton_method(:response) do
+              {status: 503, headers: {}, body: "Service Unavailable", request: {method: :post, url: "https://api.openai.com/v1/chat/completions", params: nil, headers: {}, body: "{}"}}
+            end
+            raise e
+          else
+            valid_response
+          end
+        end
+
+        response = subject.chat(messages: messages, model: "gpt-4o-mini")
+        expect(response).to be_a(Langchain::LLM::OpenAIResponse)
+        expect(response.chat_completion).to eq("OK")
+        expect(call_count).to eq(2)
+      end
+
+      it "retries on 429 and then raises after exhausting attempts" do
+        call_count = 0
+
+        allow(subject.client).to receive(:chat) do |parameters:|
+          call_count += 1
+          e = Faraday::Error.new("Too Many Requests")
+          e.define_singleton_method(:response) do
+            {status: 429, headers: {}, body: "Too Many Requests", request: {method: :post, url: "https://api.openai.com/v1/chat/completions", params: nil, headers: {}, body: "{}"}}
+          end
+          raise e
+        end
+
+        expect {
+          subject.chat(messages: messages, model: "gpt-4o-mini")
+        }.to raise_error(Langchain::LLM::RateLimitError, /OpenAI API error: Server responded with 429/)
+        expect(call_count).to eq(3) # initial try + 2 retries
+      end
+    end
+
+    context "timeouts and connection failures" do
+      let(:options) { {default_options: {retry_attempts: 1, retry_backoff_base: 0.0}} }
+
+      it "retries timeout once then raises TimeoutError" do
+        call_count = 0
+        allow(subject.client).to receive(:chat) do |parameters:|
+          call_count += 1
+          if call_count == 1
+            e = Faraday::TimeoutError.new("execution expired")
+            raise e
+          else
+            raise Faraday::TimeoutError.new("execution expired")
+          end
+        end
+        expect {
+          subject.chat(messages: messages, model: "gpt-4o-mini")
+        }.to raise_error(Langchain::LLM::TimeoutError, /timeout/i)
+        expect(call_count).to eq(2)
+      end
+
+      it "retries connection failed once then raises ConnectionError" do
+        call_count = 0
+        allow(subject.client).to receive(:chat) do |parameters:|
+          call_count += 1
+          if call_count == 1
+            e = Faraday::ConnectionFailed.new("Failed to open TCP connection")
+            raise e
+          else
+            raise Faraday::ConnectionFailed.new("Failed to open TCP connection")
+          end
+        end
+        expect {
+          subject.chat(messages: messages, model: "gpt-4o-mini")
+        }.to raise_error(Langchain::LLM::ConnectionError, /connection failed/i)
+        expect(call_count).to eq(2)
+      end
+    end
+  end
+
   describe "#summarize" do
     let(:text) { "Text to summarize" }
 
