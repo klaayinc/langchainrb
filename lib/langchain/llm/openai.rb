@@ -46,7 +46,8 @@ module Langchain::LLM
         n: {default: @defaults[:n]},
         temperature: {default: @defaults[:temperature]},
         user: {},
-        response_format: {default: @defaults[:response_format]}
+        response_format: {default: @defaults[:response_format]},
+        reasoning_effort: {default: @defaults[:reasoning_effort]}
       )
       chat_parameters.ignore(:top_k)
     end
