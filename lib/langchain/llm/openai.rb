@@ -128,6 +128,21 @@ module Langchain::LLM
         raise ArgumentError.new("'tool_choice' is only allowed when 'tools' are specified.")
       end
 
+      # Enforce OpenAI reasoning model constraints (e.g., o1/o3):
+      #  - temperature must be 1
+      #  - parallel_tool_calls is unsupported and must be omitted entirely
+      if reasoning_model_name?(parameters[:model])
+        if parameters[:temperature] && parameters[:temperature] != 1
+          Langchain.logger.info "Forcing temperature=1 for OpenAI reasoning model #{parameters[:model]} (was #{parameters[:temperature]})"
+        end
+        parameters[:temperature] = 1
+
+        if parameters.key?(:parallel_tool_calls)
+          Langchain.logger.info "Removing unsupported 'parallel_tool_calls' for OpenAI reasoning model #{parameters[:model]}"
+          parameters.delete(:parallel_tool_calls)
+        end
+      end
+
       if block
         @response_chunks = []
         parameters[:stream_options] = {include_usage: true}
@@ -294,6 +309,10 @@ module Langchain::LLM
           }
         }
       end
+    end
+
+    def reasoning_model_name?(model_name)
+      model_name.to_s.start_with?("o1", "o3")
     end
   end
 end

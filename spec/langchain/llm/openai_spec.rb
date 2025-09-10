@@ -978,4 +978,148 @@ RSpec.describe Langchain::LLM::OpenAI do
       end
     end
   end
+
+  describe "reasoning model constraints" do
+    let(:logger) { double("logger") }
+    let(:messages) { [{role: "user", content: "What is 2+2?"}] }
+    let(:response) do
+      {
+        "id" => "chatcmpl-xyz",
+        "object" => "chat.completion",
+        "created" => Time.now.to_i,
+        "model" => "o1-preview",
+        "choices" => [
+          {"message" => {"role" => "assistant", "content" => "4"}, "finish_reason" => "stop", "index" => 0}
+        ],
+        "usage" => {"prompt_tokens" => 5, "completion_tokens" => 1, "total_tokens" => 6}
+      }
+    end
+
+    before do
+      allow(Langchain).to receive(:logger).and_return(logger)
+      allow(logger).to receive(:info)
+      allow(logger).to receive(:debug?).and_return(false)
+    end
+
+    context "with o1-preview model" do
+      it "forces temperature to 1" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_including(temperature: 1)).and_return(response)
+        subject.chat(messages: messages, model: "o1-preview", temperature: 0.5)
+      end
+
+      it "logs when forcing temperature" do
+        allow(subject.client).to receive(:chat).and_return(response)
+        subject.chat(messages: messages, model: "o1-preview", temperature: 0.5)
+        expect(logger).to have_received(:info).with("Forcing temperature=1 for OpenAI reasoning model o1-preview (was 0.5)")
+      end
+
+      it "removes parallel_tool_calls parameter" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_not_including(:parallel_tool_calls)).and_return(response)
+        subject.chat(messages: messages, model: "o1-preview", parallel_tool_calls: true)
+      end
+
+      it "logs when removing parallel_tool_calls" do
+        allow(subject.client).to receive(:chat).and_return(response)
+        subject.chat(messages: messages, model: "o1-preview", parallel_tool_calls: true)
+        expect(logger).to have_received(:info).with("Removing unsupported 'parallel_tool_calls' for OpenAI reasoning model o1-preview")
+      end
+
+      it "does not log when temperature is already 1" do
+        allow(subject.client).to receive(:chat).and_return(response)
+        subject.chat(messages: messages, model: "o1-preview", temperature: 1)
+        expect(logger).not_to have_received(:info).with(/Forcing temperature/)
+      end
+
+      it "does not log when parallel_tool_calls is not present" do
+        allow(subject.client).to receive(:chat).and_return(response)
+        subject.chat(messages: messages, model: "o1-preview")
+        expect(logger).not_to have_received(:info).with(/Removing unsupported/)
+      end
+    end
+
+    context "with o3-mini model" do
+      it "forces temperature to 1" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_including(temperature: 1)).and_return(response)
+        subject.chat(messages: messages, model: "o3-mini", temperature: 0.3)
+      end
+
+      it "removes parallel_tool_calls parameter" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_not_including(:parallel_tool_calls)).and_return(response)
+        subject.chat(messages: messages, model: "o3-mini", parallel_tool_calls: false)
+      end
+    end
+
+    context "with non-reasoning models" do
+      it "does not modify temperature" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_including(temperature: 0.7)).and_return(response)
+        subject.chat(messages: messages, model: "gpt-4o-mini", temperature: 0.7)
+      end
+
+      it "does not remove parallel_tool_calls" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_including(parallel_tool_calls: true)).and_return(response)
+        subject.chat(messages: messages, model: "gpt-4o-mini", parallel_tool_calls: true)
+      end
+
+      it "does not log any constraint messages" do
+        allow(subject.client).to receive(:chat).and_return(response)
+        subject.chat(messages: messages, model: "gpt-4o-mini", temperature: 0.5, parallel_tool_calls: true)
+        expect(logger).not_to have_received(:info)
+      end
+    end
+  end
+
+  describe "reasoning_effort parameter" do
+    context "when reasoning_effort is provided in default_options" do
+      let(:subject) { described_class.new(api_key: "123", default_options: {reasoning_effort: "medium"}) }
+
+      it "includes reasoning_effort in chat parameters" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_including(reasoning_effort: "medium")).and_return({})
+        subject.chat(messages: [{role: "user", content: "Hello"}])
+      end
+    end
+
+    context "when reasoning_effort is provided in chat call" do
+      it "includes reasoning_effort in chat parameters" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_including(reasoning_effort: "high")).and_return({})
+        subject.chat(messages: [{role: "user", content: "Hello"}], reasoning_effort: "high")
+      end
+    end
+
+    context "when reasoning_effort is not provided" do
+      it "does not include reasoning_effort in chat parameters" do
+        expect(subject.client).to receive(:chat).with(parameters: hash_not_including(:reasoning_effort)).and_return({})
+        subject.chat(messages: [{role: "user", content: "Hello"}])
+      end
+    end
+  end
+
+  describe "#reasoning_model_name?" do
+    it "returns true for o1 models" do
+      expect(subject.send(:reasoning_model_name?, "o1-preview")).to be true
+      expect(subject.send(:reasoning_model_name?, "o1-mini")).to be true
+      expect(subject.send(:reasoning_model_name?, "o1")).to be true
+    end
+
+    it "returns true for o3 models" do
+      expect(subject.send(:reasoning_model_name?, "o3-mini")).to be true
+      expect(subject.send(:reasoning_model_name?, "o3-preview")).to be true
+      expect(subject.send(:reasoning_model_name?, "o3")).to be true
+    end
+
+    it "returns false for non-reasoning models" do
+      expect(subject.send(:reasoning_model_name?, "gpt-4o-mini")).to be false
+      expect(subject.send(:reasoning_model_name?, "gpt-3.5-turbo")).to be false
+      expect(subject.send(:reasoning_model_name?, "text-davinci-003")).to be false
+      expect(subject.send(:reasoning_model_name?, "claude-3")).to be false
+    end
+
+    it "handles string and symbol inputs" do
+      expect(subject.send(:reasoning_model_name?, :"o1-preview")).to be true
+      expect(subject.send(:reasoning_model_name?, :"gpt-4o-mini")).to be false
+    end
+
+    it "handles nil input" do
+      expect(subject.send(:reasoning_model_name?, nil)).to be false
+    end
+  end
 end

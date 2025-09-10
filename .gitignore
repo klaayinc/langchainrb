@@ -16,3 +16,6 @@
 .idea
 test.ann
 Gemfile.lock
+
+# Bundler
+vendor/bundle
