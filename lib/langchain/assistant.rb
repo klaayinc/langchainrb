@@ -320,13 +320,6 @@ module Langchain
     def execute_tools
       run_tools(messages.last.tool_calls)
       :in_progress
-    rescue => e
-      Langchain.logger.error("#{self.class} - Error running tools: #{e.message}; #{e.backtrace.join('\n')}")
-      
-      # Add the error message as a tool response so the AI can see what went wrong
-      add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", tool_call_id: messages.last.tool_calls.first&.dig("id"))
-      
-      :in_progress
     end
 
     # Call to the LLM#chat() method
@@ -378,6 +371,11 @@ module Langchain
       else
         submit_tool_output(tool_call_id: tool_call_id, output: output)
       end
+    rescue => e
+      Langchain.logger.error("#{self.class} - Error running tool '#{tool_name}': #{e.message}; #{e.backtrace.join('\n')}")
+      
+      # Add the error message as a tool response so the AI can see what went wrong
+      add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", tool_call_id: tool_call_id)
     end
 
     # Build a message

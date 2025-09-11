@@ -612,9 +612,9 @@ RSpec.describe Langchain::Assistant do
           allow(subject.tools[0]).to receive(:execute).and_raise(StandardError, "Tool execution failed")
         end
 
-        it "logs the error" do
+        it "logs the error with tool name" do
           expect(Langchain.logger).to receive(:error).with(
-            match(/#{described_class} - Error running tools: Tool execution failed;/)
+            match(/#{described_class} - Error running tool 'langchain_tool_calculator': Tool execution failed;/)
           )
 
           subject.send(:execute_tools)
@@ -668,7 +668,7 @@ RSpec.describe Langchain::Assistant do
 
         it "handles ArgumentError and continues conversation" do
           expect(Langchain.logger).to receive(:error).with(
-            match(/#{described_class} - Error running tools: Invalid input provided;/)
+            match(/#{described_class} - Error running tool 'langchain_tool_calculator': Invalid input provided;/)
           )
 
           result = subject.send(:execute_tools)
@@ -686,7 +686,7 @@ RSpec.describe Langchain::Assistant do
 
         it "handles RuntimeError and continues conversation" do
           expect(Langchain.logger).to receive(:error).with(
-            match(/#{described_class} - Error running tools: Network timeout;/)
+            match(/#{described_class} - Error running tool 'langchain_tool_calculator': Network timeout;/)
           )
 
           result = subject.send(:execute_tools)
@@ -716,7 +716,7 @@ RSpec.describe Langchain::Assistant do
 
         it "handles tool not found error and continues conversation" do
           expect(Langchain.logger).to receive(:error).with(
-            match(/#{described_class} - Error running tools: Tool: unknown_tool not found in assistant.tools;/)
+            match(/#{described_class} - Error running tool 'unknown_tool': Tool: unknown_tool not found in assistant.tools;/)
           )
 
           result = subject.send(:execute_tools)
@@ -784,16 +784,18 @@ RSpec.describe Langchain::Assistant do
 
         it "handles multiple tool failures and continues conversation" do
           expect(Langchain.logger).to receive(:error).with(
-            match(/#{described_class} - Error running tools: Tool execution failed;/)
-          )
+            match(/#{described_class} - Error running tool 'langchain_tool_calculator': Tool execution failed;/)
+          ).twice
 
           result = subject.send(:execute_tools)
           expect(result).to eq(:in_progress)
 
-          # Should add error message for the first tool call
-          error_message = subject.messages.last
-          expect(error_message.content).to eq("Error: Tool execution failed")
-          expect(error_message.tool_call_id).to eq("call_1")
+          # Should add error message for both tool calls
+          error_messages = subject.messages.last(2)
+          expect(error_messages[0].content).to eq("Error: Tool execution failed")
+          expect(error_messages[0].tool_call_id).to eq("call_1")
+          expect(error_messages[1].content).to eq("Error: Tool execution failed")
+          expect(error_messages[1].tool_call_id).to eq("call_2")
         end
       end
     end
