@@ -374,19 +374,22 @@ module Langchain
     rescue => e
       Langchain.logger.error("#{self.class} - Error running tool '#{tool_name}': #{e.message}; #{e.backtrace.join('\n')}")
 
-      Sentry.capture_exception(e, extra: { 
-        tool_call:, 
-        assistant: self, 
-        messages:, 
-        metadata: @metadata, 
-        state: @state, 
-        tool_choice:, 
-        parallel_tool_calls:, 
-        tools:, 
-        llm:, 
-        llm_adapter:, 
-        add_message_callback:
-      })
+      # Capture exception with Sentry if available
+      if defined?(Sentry)
+        Sentry.capture_exception(e, extra: { 
+          tool_call:, 
+          assistant: self, 
+          messages:, 
+          metadata: @metadata, 
+          state: @state, 
+          tool_choice:, 
+          parallel_tool_calls:, 
+          tools:, 
+          llm:, 
+          llm_adapter:, 
+          add_message_callback:
+        })
+      end
       
       # Add the error message as a tool response so the AI can see what went wrong
       # Handle both ToolResponse and legacy return values for error cases
