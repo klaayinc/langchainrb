@@ -320,9 +320,6 @@ module Langchain
     def execute_tools
       run_tools(messages.last.tool_calls)
       :in_progress
-    rescue => e
-      Langchain.logger.error("#{self.class} - Error running tools: #{e.message}; #{e.backtrace.join('\n')}")
-      :failed
     end
 
     # Call to the LLM#chat() method
@@ -373,6 +370,31 @@ module Langchain
         add_message(role: @llm_adapter.tool_role, content: output.content, image_url: output.image_url, tool_call_id: tool_call_id)
       else
         submit_tool_output(tool_call_id: tool_call_id, output: output)
+      end
+    rescue => e
+      Langchain.logger.error("#{self.class} - Error running tool '#{tool_name}': #{e.message}; #{e.backtrace.join('\n')}")
+
+      Sentry.capture_exception(e, extra: { 
+        tool_call:, 
+        assistant: self, 
+        messages:, 
+        metadata: @metadata, 
+        state: @state, 
+        tool_choice:, 
+        parallel_tool_calls:, 
+        tools:, 
+        llm:, 
+        llm_adapter:, 
+        add_message_callback:
+      })
+      
+      # Add the error message as a tool response so the AI can see what went wrong
+      # Handle both ToolResponse and legacy return values for error cases
+      content = "Error running tool (#{tool_name}): #{e.message}"
+      if output.is_a?(ToolResponse)
+        add_message(role: @llm_adapter.tool_role, content:, tool_call_id:)
+      else
+        submit_tool_output(tool_call_id:, output: content)
       end
     end
 
