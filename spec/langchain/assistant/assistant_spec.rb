@@ -627,7 +627,7 @@ RSpec.describe Langchain::Assistant do
 
           error_message = subject.messages.last
           expect(error_message.role).to eq("tool")
-          expect(error_message.content).to eq("Error: Tool execution failed")
+          expect(error_message.content).to eq("Error running tool: Tool execution failed")
           expect(error_message.tool_call_id).to eq("call_123")
         end
 
@@ -675,7 +675,7 @@ RSpec.describe Langchain::Assistant do
           expect(result).to eq(:in_progress)
 
           error_message = subject.messages.last
-          expect(error_message.content).to eq("Error: Invalid input provided")
+          expect(error_message.content).to eq("Error running tool: Invalid input provided")
         end
       end
 
@@ -693,7 +693,7 @@ RSpec.describe Langchain::Assistant do
           expect(result).to eq(:in_progress)
 
           error_message = subject.messages.last
-          expect(error_message.content).to eq("Error: Network timeout")
+          expect(error_message.content).to eq("Error running tool: Network timeout")
         end
       end
 
@@ -723,7 +723,7 @@ RSpec.describe Langchain::Assistant do
           expect(result).to eq(:in_progress)
 
           error_message = subject.messages.last
-          expect(error_message.content).to eq("Error: Tool: unknown_tool not found in assistant.tools")
+          expect(error_message.content).to eq("Error running tool: Tool: unknown_tool not found in assistant.tools")
         end
       end
 
@@ -749,7 +749,7 @@ RSpec.describe Langchain::Assistant do
           expect(result).to eq(:in_progress)
 
           error_message = subject.messages.last
-          expect(error_message.content).to eq("Error: Tool execution failed")
+          expect(error_message.content).to eq("Error running tool: Tool execution failed")
           expect(error_message.tool_call_id).to be_nil
         end
       end
@@ -792,9 +792,9 @@ RSpec.describe Langchain::Assistant do
 
           # Should add error message for both tool calls
           error_messages = subject.messages.last(2)
-          expect(error_messages[0].content).to eq("Error: Tool execution failed")
+          expect(error_messages[0].content).to eq("Error running tool: Tool execution failed")
           expect(error_messages[0].tool_call_id).to eq("call_1")
-          expect(error_messages[1].content).to eq("Error: Tool execution failed")
+          expect(error_messages[1].content).to eq("Error running tool: Tool execution failed")
           expect(error_messages[1].tool_call_id).to eq("call_2")
         end
       end

@@ -376,10 +376,11 @@ module Langchain
       
       # Add the error message as a tool response so the AI can see what went wrong
       # Handle both ToolResponse and legacy return values for error cases
+      content = "Error running tool: #{e.message}"
       if output.is_a?(ToolResponse)
-        add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", image_url: output.image_url, tool_call_id: tool_call_id)
+        add_message(role: @llm_adapter.tool_role, content:, tool_call_id:)
       else
-        add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", tool_call_id: tool_call_id)
+        submit_tool_output(tool_call_id:, output: content)
       end
     end
 
