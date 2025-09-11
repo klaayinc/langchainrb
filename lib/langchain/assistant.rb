@@ -375,7 +375,12 @@ module Langchain
       Langchain.logger.error("#{self.class} - Error running tool '#{tool_name}': #{e.message}; #{e.backtrace.join('\n')}")
       
       # Add the error message as a tool response so the AI can see what went wrong
-      add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", tool_call_id: tool_call_id)
+      # Handle both ToolResponse and legacy return values for error cases
+      if output.is_a?(ToolResponse)
+        add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", image_url: output.image_url, tool_call_id: tool_call_id)
+      else
+        add_message(role: @llm_adapter.tool_role, content: "Error: #{e.message}", tool_call_id: tool_call_id)
+      end
     end
 
     # Build a message
