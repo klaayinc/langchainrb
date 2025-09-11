@@ -588,6 +588,215 @@ RSpec.describe Langchain::Assistant do
         expect(subject.instructions).to be_nil
       end
     end
+
+    describe "tool execution failure handling" do
+      let(:tool_call) do
+        {
+          "id" => "call_123",
+          "type" => "function",
+          "function" => {
+            "name" => "langchain_tool_calculator__execute",
+            "arguments" => {input: "2+2"}.to_json
+          }
+        }
+      end
+
+      before do
+        # Add a message with tool calls to trigger execute_tools
+        subject.add_message(role: "assistant", tool_calls: [tool_call])
+        subject.instance_variable_set(:@state, :requires_action)
+      end
+
+      context "when tool execution raises an error" do
+        before do
+          allow(subject.tools[0]).to receive(:execute).and_raise(StandardError, "Tool execution failed")
+        end
+
+        it "logs the error" do
+          expect(Langchain.logger).to receive(:error).with(
+            match(/#{described_class} - Error running tools: Tool execution failed;/)
+          )
+
+          subject.send(:execute_tools)
+        end
+
+        it "adds error message as tool response" do
+          expect {
+            subject.send(:execute_tools)
+          }.to change { subject.messages.count }.by(1)
+
+          error_message = subject.messages.last
+          expect(error_message.role).to eq("tool")
+          expect(error_message.content).to eq("Error: Tool execution failed")
+          expect(error_message.tool_call_id).to eq("call_123")
+        end
+
+        it "continues the conversation by returning :in_progress state" do
+          result = subject.send(:execute_tools)
+          expect(result).to eq(:in_progress)
+        end
+
+        it "allows the assistant to continue processing after tool failure" do
+          # Mock the LLM to return a response after the tool error
+          response = double(
+            "Response",
+            tool_calls: [],
+            role: "assistant",
+            chat_completion: "I encountered an error with the calculator tool, but I can still help you.",
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            completion: nil
+          )
+
+          allow(subject.llm).to receive(:chat).and_return(response)
+
+          # Execute tools (which will fail)
+          subject.send(:execute_tools)
+
+          # Process the next message (which should work)
+          subject.send(:handle_user_or_tool_or_system_message)
+
+          expect(subject.messages.last.content).to eq("I encountered an error with the calculator tool, but I can still help you.")
+        end
+      end
+
+      context "when tool execution raises ArgumentError" do
+        before do
+          allow(subject.tools[0]).to receive(:execute).and_raise(ArgumentError, "Invalid input provided")
+        end
+
+        it "handles ArgumentError and continues conversation" do
+          expect(Langchain.logger).to receive(:error).with(
+            match(/#{described_class} - Error running tools: Invalid input provided;/)
+          )
+
+          result = subject.send(:execute_tools)
+          expect(result).to eq(:in_progress)
+
+          error_message = subject.messages.last
+          expect(error_message.content).to eq("Error: Invalid input provided")
+        end
+      end
+
+      context "when tool execution raises RuntimeError" do
+        before do
+          allow(subject.tools[0]).to receive(:execute).and_raise(RuntimeError, "Network timeout")
+        end
+
+        it "handles RuntimeError and continues conversation" do
+          expect(Langchain.logger).to receive(:error).with(
+            match(/#{described_class} - Error running tools: Network timeout;/)
+          )
+
+          result = subject.send(:execute_tools)
+          expect(result).to eq(:in_progress)
+
+          error_message = subject.messages.last
+          expect(error_message.content).to eq("Error: Network timeout")
+        end
+      end
+
+      context "when tool is not found" do
+        let(:unknown_tool_call) do
+          {
+            "id" => "call_456",
+            "type" => "function",
+            "function" => {
+              "name" => "unknown_tool__execute",
+              "arguments" => {input: "test"}.to_json
+            }
+          }
+        end
+
+        before do
+          subject.add_message(role: "assistant", tool_calls: [unknown_tool_call])
+          subject.instance_variable_set(:@state, :requires_action)
+        end
+
+        it "handles tool not found error and continues conversation" do
+          expect(Langchain.logger).to receive(:error).with(
+            match(/#{described_class} - Error running tools: Tool: unknown_tool not found in assistant.tools;/)
+          )
+
+          result = subject.send(:execute_tools)
+          expect(result).to eq(:in_progress)
+
+          error_message = subject.messages.last
+          expect(error_message.content).to eq("Error: Tool: unknown_tool not found in assistant.tools")
+        end
+      end
+
+      context "when tool call has no ID" do
+        let(:tool_call_without_id) do
+          {
+            "type" => "function",
+            "function" => {
+              "name" => "langchain_tool_calculator__execute",
+              "arguments" => {input: "2+2"}.to_json
+            }
+          }
+        end
+
+        before do
+          subject.add_message(role: "assistant", tool_calls: [tool_call_without_id])
+          subject.instance_variable_set(:@state, :requires_action)
+          allow(subject.tools[0]).to receive(:execute).and_raise(StandardError, "Tool execution failed")
+        end
+
+        it "handles missing tool call ID gracefully" do
+          result = subject.send(:execute_tools)
+          expect(result).to eq(:in_progress)
+
+          error_message = subject.messages.last
+          expect(error_message.content).to eq("Error: Tool execution failed")
+          expect(error_message.tool_call_id).to be_nil
+        end
+      end
+
+      context "when multiple tool calls fail" do
+        let(:multiple_tool_calls) do
+          [
+            {
+              "id" => "call_1",
+              "type" => "function",
+              "function" => {
+                "name" => "langchain_tool_calculator__execute",
+                "arguments" => {input: "2+2"}.to_json
+              }
+            },
+            {
+              "id" => "call_2",
+              "type" => "function",
+              "function" => {
+                "name" => "langchain_tool_calculator__execute",
+                "arguments" => {input: "3+3"}.to_json
+              }
+            }
+          ]
+        end
+
+        before do
+          subject.add_message(role: "assistant", tool_calls: multiple_tool_calls)
+          subject.instance_variable_set(:@state, :requires_action)
+          allow(subject.tools[0]).to receive(:execute).and_raise(StandardError, "Tool execution failed")
+        end
+
+        it "handles multiple tool failures and continues conversation" do
+          expect(Langchain.logger).to receive(:error).with(
+            match(/#{described_class} - Error running tools: Tool execution failed;/)
+          )
+
+          result = subject.send(:execute_tools)
+          expect(result).to eq(:in_progress)
+
+          # Should add error message for the first tool call
+          error_message = subject.messages.last
+          expect(error_message.content).to eq("Error: Tool execution failed")
+          expect(error_message.tool_call_id).to eq("call_1")
+        end
+      end
+    end
   end
 
   context "when llm is MistralAI" do
