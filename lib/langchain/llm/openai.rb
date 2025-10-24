@@ -312,7 +312,7 @@ module Langchain::LLM
     end
 
     def reasoning_model_name?(model_name)
-      model_name.to_s.start_with?("o1", "o3")
+      model_name.to_s.start_with?("o1", "o3", "o4")
     end
   end
 end
